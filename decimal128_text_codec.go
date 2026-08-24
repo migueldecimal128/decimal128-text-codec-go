@@ -11,14 +11,13 @@ type, no context, no status flags. Go has no 128-bit integer, so the pair is
 the natural spelling here, as it is in the C, Java and Kotlin ports.
 
 This package provides no arithmetic, no comparison and no field extraction. For
-the full IEEE 754-2019 decimal128 implementation see decimal128-go at
-https://decimal128.com.
+the full IEEE 754-2019 decimal128 implementation see https://decimal128.com.
 
 Rounding, where the text -> bits direction requires it, is the IEEE 754-2019
 roundTiesToEven attribute and is not configurable. Output form is the GDAS
 to-scientific-string form and is not configurable.
 
-All four functions are pure, allocation-free and safe for concurrent use: the
+All functions are pure, allocation-free and safe for concurrent use: the
 renderers write into the caller's buffer, and the parsers return package-level
 sentinel errors. The package has no dependencies outside the standard library.
 */
@@ -149,11 +148,12 @@ const (
  * MaxLen is the size of a render buffer, and the exact bound on a rendered
  * decimal128. The widest scientific form -9.999...E-6143 is 1 sign, 1 digit,
  * 1 radix point, 33 digits, 1 E, 1 sign and 4 exponent digits; the widest plain
- * form -0.000000999... is 1 sign, 1 zero, 1 radix point, 6 leading zeros and
- * 34 digits. Both reach exactly 42.
+ * form -0.00000999... is 1 sign, 1 zero, 1 radix point, 5 leading zeros and
+ * 34 digits. Each form reaches exactly 42.
  *
- * The plain form's six leading zeros are pinned by the GDAS rule that selects
- * it only when the adjusted exponent is at least -6, and the exponent field
+ * The plain form's five leading zeros are pinned by the GDAS rule that selects
+ * it only when the adjusted exponent is at least -6, which puts five zeros
+ * between the radix point and the first significant digit. The exponent field
  * cannot exceed four digits inside decimal128's range, so neither number can
  * drift without the format itself changing.
  *
@@ -907,7 +907,7 @@ func fnzToNormalizedScientificString(out []byte, sign bool, qExp, digitLen int, 
 
 /*
  * Finite non-zero: pick the form. Integer when the quantum exponent is zero,
- * fixed-point when the value sits within six leading zeros of unity,
+ * fixed-point when the adjusted exponent is at least -6,
  * scientific otherwise -- the GDAS auto-select rule.
  */
 func fnzString(out []byte, sign bool, qExp int, dw1, dw0 uint64) int {

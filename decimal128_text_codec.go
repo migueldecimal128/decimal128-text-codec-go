@@ -737,21 +737,35 @@ func nanString(out []byte, sign, isSignaling bool, payloadHi, payloadLo uint64) 
 	return totalLen
 }
 
-var zeros = [16]string{
-	"0", "0.0", "0.00", "0.000", "0.0000", "0.00000", "0.000000", "",
-	"-0", "-0.0", "-0.00", "-0.000", "-0.0000", "-0.00000", "-0.000000", "",
-}
+/*
+ * Every plain-form zero is a prefix of this literal. k = -qExp is the count of
+ * zeros after the radix point, so k = 0 renders "0" with no radix point at all
+ * and k >= 1 renders "0." followed by k zeros -- lengths 1 and k + 2.
+ *
+ * The sign is not in the data. It is written into out[0] unconditionally and
+ * overwritten by the '0' when the value is positive, the same trick the finite
+ * renderers use. That works because the negative spelling of every form here is
+ * the positive spelling with one byte in front; a form that ever put the sign
+ * anywhere else would render wrong rather than fail to compile.
+ */
+const plainZero = "0.000000"
 
 func zerString(out []byte, sign bool, qExp int) int {
 	if qExp <= 0 && qExp >= -6 {
-		signBitSet := 0
-		if sign {
-			signBitSet = 1
+		k := -qExp
+		zeroLen := 1
+		if k != 0 {
+			zeroLen = k + 2
 		}
-		index := (-qExp + (signBitSet << 3)) & 0x0F
-		s := zeros[index]
-		demand("the plain zero fits the buffer", len(s) <= MaxLen)
-		return copy(out, s)
+		signLen := 0
+		if sign {
+			signLen = 1
+		}
+		totalLen := signLen + zeroLen
+		demand("the plain zero fits the buffer", totalLen <= MaxLen)
+		out[0] = '-' // overwritten by the '0' when unsigned
+		copy(out[signLen:], plainZero[:zeroLen])
+		return totalLen
 	}
 	var base string
 	if qExp > 0 {

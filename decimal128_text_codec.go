@@ -698,41 +698,58 @@ func u128ToAscii(digitPrintCount int, dw1, dw0 uint64, ascii []byte, off int) in
  * to (sign, qExp, coefficient) and hand it here.
  * ------------------------------------------------------------------------ */
 
+/*
+ * None of the optional leading characters live in the string data. The sign,
+ * and the 's' that marks a signaling NaN, are each written unconditionally and
+ * then overwritten by whatever follows when they are not wanted -- the trick
+ * fnzToIntegerString already uses for the sign. That holds only because every
+ * optional character is a single byte at the front of the form: a spelling that
+ * ever put one elsewhere would render wrong rather than fail to compile. The
+ * one exception is written where it happens, in zerString's exponent form,
+ * where the byte is a TRAILING '+' overwritten by AppendInt's own '-'.
+ */
+const infinityText = "Infinity"
+
 func infString(out []byte, sign bool) int {
-	s := "Infinity"
+	signLen := 0
 	if sign {
-		s = "-Infinity"
+		signLen = 1
 	}
-	demand("Infinity fits the buffer", len(s) <= MaxLen)
-	return copy(out, s)
+	totalLen := signLen + len(infinityText)
+	demand("Infinity fits the buffer", totalLen <= MaxLen)
+	out[0] = '-' // overwritten by the 'I' when unsigned
+	copy(out[signLen:], infinityText)
+	return totalLen
 }
 
+const nanText = "NaN"
+
 func nanString(out []byte, sign, isSignaling bool, payloadHi, payloadLo uint64) int {
-	var base string
-	if !isSignaling {
-		base = "NaN"
-		if sign {
-			base = "-NaN"
-		}
-	} else {
-		base = "sNaN"
-		if sign {
-			base = "-sNaN"
-		}
+	signLen := 0
+	if sign {
+		signLen = 1
 	}
-	baseLen := len(base)
+	sLen := 0
+	if isSignaling {
+		sLen = 1
+	}
+	wordOff := signLen + sLen
+	baseLen := wordOff + len(nanText)
+	out[0] = '-'       // overwritten by the 's' or the 'N' when unsigned
+	out[signLen] = 's' // overwritten by the 'N' when quiet
 
 	if (payloadHi|payloadLo) == 0 ||
 		// non-canonical payload, IEEE 754-2019 3.5.2 c) 2) -- read as zero
 		payloadHi > maxPayloadHi ||
 		(payloadHi == maxPayloadHi && payloadLo > maxPayloadLo) {
 		demand("the bare NaN fits the buffer", baseLen <= MaxLen)
-		return copy(out, base)
+		copy(out[wordOff:], nanText)
+		return baseLen
 	}
 	digitLen := calcDigitLen128(payloadHi, payloadLo)
 	totalLen := baseLen + digitLen
 	demand("the NaN payload fits the buffer", totalLen <= MaxLen)
-	copy(out, base)
+	copy(out[wordOff:], nanText)
 	u128ToAscii(digitLen, payloadHi, payloadLo, out, baseLen)
 	return totalLen
 }
@@ -749,6 +766,9 @@ func nanString(out []byte, sign, isSignaling bool, payloadHi, payloadLo uint64) 
  * anywhere else would render wrong rather than fail to compile.
  */
 const plainZero = "0.000000"
+
+// The exponent form's base. The '+' is not here: see zerString below.
+const zeroExpText = "0E"
 
 func zerString(out []byte, sign bool, qExp int) int {
 	if qExp <= 0 && qExp >= -6 {
@@ -767,21 +787,26 @@ func zerString(out []byte, sign bool, qExp int) int {
 		copy(out[signLen:], plainZero[:zeroLen])
 		return totalLen
 	}
-	var base string
-	if qExp > 0 {
-		base = "0E+"
-		if sign {
-			base = "-0E+"
-		}
-	} else {
-		base = "0E" // qExp is negative and prints its own sign
-		if sign {
-			base = "-0E"
-		}
+	signLen := 0
+	if sign {
+		signLen = 1
 	}
-	baseLen := len(base)
+	// A positive exponent needs an explicit '+'; a negative one prints its own
+	// '-' from AppendInt. Write the '+' unconditionally and let AppendInt land
+	// on top of it when qExp < 0 -- the same discipline as the leading sign,
+	// pointed the other way. It is correct only because AppendInt emits a '-'
+	// for a negative value and emits nothing for a positive one, and because the
+	// plain form above has already taken every qExp in [-6, 0], so this branch
+	// never sees zero.
+	plusLen := 0
+	if qExp > 0 {
+		plusLen = 1
+	}
+	baseLen := signLen + len(zeroExpText) + plusLen
 	demand("the exponent-form zero fits the buffer", baseLen+6 <= MaxLen)
-	copy(out, base)
+	out[0] = '-' // overwritten by the '0' when unsigned
+	copy(out[signLen:], zeroExpText)
+	out[signLen+len(zeroExpText)] = '+' // overwritten by AppendInt's '-' when qExp < 0
 	// strconv.AppendInt writes in place: out[:baseLen] keeps the buffer's
 	// capacity, so nothing is reallocated. It stands in for the C port's
 	// hand-rolled appendInt, which itself replaced the reference's Int.toString.

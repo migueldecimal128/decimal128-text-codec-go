@@ -167,7 +167,7 @@ func TestCanonicalTableDecodesAndReEncodes(t *testing.T) {
 // each other.
 func runDecodeTable(t *testing.T, rows []corpusRow, label string) {
 	t.Helper()
-	var buf [codec.Max]byte
+	var buf [codec.MaxLen]byte
 	for _, row := range rows {
 		n := codec.Bid128ToString(&buf, row.bidHi, row.bidLo)
 		if bidText := string(buf[:n]); bidText != row.text {

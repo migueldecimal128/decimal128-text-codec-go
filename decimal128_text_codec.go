@@ -38,10 +38,10 @@ package decimal128textcodec
  *    four-partial-product decomposition -- and C's __int128 / __umulh /
  *    synthesize-from-limbs three-way split, and the whole portable build that
  *    exists to exercise it -- collapse to a call each.
- *  - the renderers write into the caller's *[Max]byte and return a length, as
- *    the C port does. They return the length rather than out[:n] because a Go
- *    slice header carries a capacity this API has no use for: out[:n] would
- *    hand back cap == Max, so appending to the result would silently write
+ *  - the renderers write into the caller's *[MaxLen]byte and return a length,
+ *    as the C port does. They return the length rather than out[:n] because a
+ *    Go slice header carries a capacity this API has no use for: out[:n] would
+ *    hand back cap == MaxLen, so appending to the result would silently write
  *    into the rest of the caller's buffer. Returning the length is also what
  *    the standard library does for this shape -- utf8.EncodeRune,
  *    binary.PutUvarint, hex.Encode.
@@ -146,7 +146,7 @@ const (
 )
 
 /*
- * Max is the size of a render buffer, and the exact bound on a rendered
+ * MaxLen is the size of a render buffer, and the exact bound on a rendered
  * decimal128. The widest scientific form -9.999...E-6143 is 1 sign, 1 digit,
  * 1 radix point, 33 digits, 1 E, 1 sign and 4 exponent digits; the widest plain
  * form -0.000000999... is 1 sign, 1 zero, 1 radix point, 6 leading zeros and
@@ -163,10 +163,10 @@ const (
  * above would quietly consume the slack instead of firing.
  *
  * It is exported because it is part of the render signature -- a caller sizes
- * their buffer with it, and *[Max]byte puts it in the type, so an undersized
+ * their buffer with it, and *[MaxLen]byte puts it in the type, so an undersized
  * buffer is a compile error.
  */
-const Max = 42
+const MaxLen = 42
 
 /* --------------------------------------------------------------------------
  * Low-level unsigned arithmetic
@@ -703,7 +703,7 @@ func infString(out []byte, sign bool) int {
 	if sign {
 		s = "-Infinity"
 	}
-	demand("Infinity fits the buffer", len(s) <= Max)
+	demand("Infinity fits the buffer", len(s) <= MaxLen)
 	return copy(out, s)
 }
 
@@ -726,12 +726,12 @@ func nanString(out []byte, sign, isSignaling bool, payloadHi, payloadLo uint64) 
 		// non-canonical payload, IEEE 754-2019 3.5.2 c) 2) -- read as zero
 		payloadHi > maxPayloadHi ||
 		(payloadHi == maxPayloadHi && payloadLo > maxPayloadLo) {
-		demand("the bare NaN fits the buffer", baseLen <= Max)
+		demand("the bare NaN fits the buffer", baseLen <= MaxLen)
 		return copy(out, base)
 	}
 	digitLen := calcDigitLen128(payloadHi, payloadLo)
 	totalLen := baseLen + digitLen
-	demand("the NaN payload fits the buffer", totalLen <= Max)
+	demand("the NaN payload fits the buffer", totalLen <= MaxLen)
 	copy(out, base)
 	u128ToAscii(digitLen, payloadHi, payloadLo, out, baseLen)
 	return totalLen
@@ -750,7 +750,7 @@ func zerString(out []byte, sign bool, qExp int) int {
 		}
 		index := (-qExp + (signBitSet << 3)) & 0x0F
 		s := zeros[index]
-		demand("the plain zero fits the buffer", len(s) <= Max)
+		demand("the plain zero fits the buffer", len(s) <= MaxLen)
 		return copy(out, s)
 	}
 	var base string
@@ -766,7 +766,7 @@ func zerString(out []byte, sign bool, qExp int) int {
 		}
 	}
 	baseLen := len(base)
-	demand("the exponent-form zero fits the buffer", baseLen+6 <= Max)
+	demand("the exponent-form zero fits the buffer", baseLen+6 <= MaxLen)
 	copy(out, base)
 	// strconv.AppendInt writes in place: out[:baseLen] keeps the buffer's
 	// capacity, so nothing is reallocated. It stands in for the C port's
@@ -782,7 +782,7 @@ func fnzToIntegerString(out []byte, sign bool, digitLen int, dw1, dw0 uint64) in
 		signLen = 1
 	}
 	totalLen := signLen + digitLen
-	demand("the integer form fits the buffer", totalLen <= Max)
+	demand("the integer form fits the buffer", totalLen <= MaxLen)
 	out[0] = '-' // overwritten by the first digit when unsigned
 	u128ToAscii(digitLen, dw1, dw0, out, signLen)
 	return totalLen
@@ -804,7 +804,7 @@ func fnzToDecimalPointString(out []byte, sign bool, qExp, digitLen int, dw1, dw0
 	}
 	decimalPointLen := 1
 	totalLen := signLen + leadingZeroCount + decimalPointLen + digitLen
-	demand("the fixed-point form fits the buffer", totalLen <= Max)
+	demand("the fixed-point form fits the buffer", totalLen <= MaxLen)
 	out[0] = '-'
 	for i := signLen; i <= leadingZeroCount; i++ { // one extra, overwritten below
 		out[i] = '0'
@@ -852,7 +852,7 @@ func fnzToNormalizedScientificString(out []byte, sign bool, qExp, digitLen int, 
 		expDigitLen = 2
 	}
 	totalLen := signLen + decimalPointLen + digitLen + expELen + expSignLen + expDigitLen
-	demand("the scientific form fits the buffer", totalLen <= Max)
+	demand("the scientific form fits the buffer", totalLen <= MaxLen)
 	out[0] = '-'
 	u128ToAscii(digitLen, dw1, dw0, out, signLen+decimalPointLen)
 	if decimalPointLen > 0 {
@@ -1700,10 +1700,10 @@ func encodeStringOrError(formatIsBid bool, str string) (hi, lo uint64, err error
 Bid128ToString renders a BID128 encoding as a decimal character sequence.
 
 It writes the text into out and returns the number of bytes written; the text
-is out[:n]. Nothing is allocated, and [Max] is part of the buffer's type, so an
-undersized buffer is a compile error rather than a runtime check.
+is out[:n]. Nothing is allocated, and [MaxLen] is part of the buffer's type, so
+an undersized buffer is a compile error rather than a runtime check.
 
-	var buf [decimal128textcodec.Max]byte
+	var buf [decimal128textcodec.MaxLen]byte
 	n := decimal128textcodec.Bid128ToString(&buf, hi, lo)
 	fmt.Printf("%s\n", buf[:n])
 
@@ -1715,7 +1715,7 @@ The output preserves cohort information -- "1.00" and "1.0" are distinct
 outputs from distinct encodings of the same numerical value -- and always
 writes the exponent sign, as in "6.02E+23".
 */
-func Bid128ToString(out *[Max]byte, hi, lo uint64) int {
+func Bid128ToString(out *[MaxLen]byte, hi, lo uint64) int {
 	return decodeBid128toString(out[:], hi, lo)
 }
 
@@ -1723,7 +1723,7 @@ func Bid128ToString(out *[Max]byte, hi, lo uint64) int {
 // It writes into out and returns the number of bytes written, exactly as
 // [Bid128ToString] does. It cannot fail; see [Bid128ToString] for what the
 // output guarantees.
-func Dpd128ToString(out *[Max]byte, hi, lo uint64) int {
+func Dpd128ToString(out *[MaxLen]byte, hi, lo uint64) int {
 	return decodeDpd128toString(out[:], hi, lo)
 }
 

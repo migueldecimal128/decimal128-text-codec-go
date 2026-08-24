@@ -16,7 +16,7 @@ the way it is here. One file, no dependencies outside the standard library.
 import codec "github.com/migueldecimal128/decimal128-text-codec-go"
 
 // bits -> text, into the caller's buffer
-var buf [codec.Max]byte
+var buf [codec.MaxLen]byte
 n := codec.Bid128ToString(&buf, hi, lo)   // the text is buf[:n]
 m := codec.Dpd128ToString(&buf, hi, lo)   // the text is buf[:m]
 
@@ -66,16 +66,16 @@ case because Go already had the answer:
   three-way `__int128` / `__umulh` / synthesize-from-limbs split along with the
   whole extra build that exists to exercise the fallback, collapse to a call
   each.
-- The renderers write into the caller's `*[Max]byte` and return a length, as the
-  C port does, so nothing is allocated. `Max` is 42, the exact bound on a
+- The renderers write into the caller's `*[MaxLen]byte` and return a length, as
+  the C port does, so nothing is allocated. `MaxLen` is 42, the exact bound on a
   rendered decimal128, and it sits in the parameter's type — an undersized
   buffer is a compile error rather than a runtime check, which is what lets the
   renderers keep their cannot-fail property. They return the length rather than
   `out[:n]` because a Go slice header carries a capacity this API has no use
-  for: `out[:n]` would hand back `cap == Max`, so appending to the result would
-  silently write into the rest of the caller's buffer. Returning the length is
-  also what the standard library does for this shape — `utf8.EncodeRune`,
-  `binary.PutUvarint`, `hex.Encode`.
+  for: `out[:n]` would hand back `cap == MaxLen`, so appending to the result
+  would silently write into the rest of the caller's buffer. Returning the
+  length is also what the standard library does for this shape —
+  `utf8.EncodeRune`, `binary.PutUvarint`, `hex.Encode`.
 - Parse returns `(hi, lo uint64, err error)`. Multi-return is Go's out-param, so
   the finalize and parse chains thread values back the same way the Swift port's
   tuples do rather than taking pointers. The failure values are unexported

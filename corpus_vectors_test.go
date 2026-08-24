@@ -167,12 +167,15 @@ func TestCanonicalTableDecodesAndReEncodes(t *testing.T) {
 // each other.
 func runDecodeTable(t *testing.T, rows []corpusRow, label string) {
 	t.Helper()
+	var buf [codec.Max]byte
 	for _, row := range rows {
-		if bidText := codec.Bid128ToString(row.bidHi, row.bidLo); bidText != row.text {
+		n := codec.Bid128ToString(&buf, row.bidHi, row.bidLo)
+		if bidText := string(buf[:n]); bidText != row.text {
 			t.Errorf("%s line %d: bid #%s rendered <%s>, expected <%s>",
 				label, row.lineNumber, row.bidHex(), bidText, row.text)
 		}
-		if dpdText := codec.Dpd128ToString(row.dpdHi, row.dpdLo); dpdText != row.text {
+		n = codec.Dpd128ToString(&buf, row.dpdHi, row.dpdLo)
+		if dpdText := string(buf[:n]); dpdText != row.text {
 			t.Errorf("%s line %d: dpd #%s rendered <%s>, expected <%s>",
 				label, row.lineNumber, row.dpdHex(), dpdText, row.text)
 		}

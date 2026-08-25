@@ -1272,6 +1272,7 @@ func finalizeSubnormal(formatIsBid, sign bool, qExpIn int, dw1In, dw0In uint64, 
 // Dispatch the three underflow cases: swamped to zero, the exact boundary,
 // and the subnormal region.
 func finalizeUnderflowRegion(formatIsBid, sign bool, qExp int, dw1, dw0 uint64, residue int) (hi, lo uint64) {
+	// IEEE 754-2019 7.5 Underflow -- the subnormal region
 	verify("the exponent is below the minimum", func() bool { return qExp < qMin })
 	truncationNeeded := qMin - qExp
 	digitLen := calcDigitLen128(dw1, dw0)
@@ -1644,7 +1645,7 @@ func parseInfinityText(sign bool, chFirst byte, t *textCursor) (hi, lo uint64, e
  * and the ports took it on 2026-08-23. It exists because C's own strtod reads
  * NAN(n-char-sequence), so the spelling reaches a caller from the platform
  * itself -- Go's strconv.ParseFloat does not read it, but the codec family is
- * one grammar across nine languages and this is part of it. The resemblance to
+ * one grammar across eight languages and this is part of it. The resemblance to
  * strtod stops at the parentheses: its sequence is letters, digits and
  * underscores read as an implementation-defined integer, while a decimal128
  * payload is decimal digits.
@@ -1793,11 +1794,6 @@ func Bid128ToAscii(out *[MaxLen]byte, hi, lo uint64) int {
 	return decodeBid128toAscii(out[:], hi, lo)
 }
 
-// Dpd128ToAscii renders a DPD128 encoding as a decimal character sequence.
-// It writes into out and returns the number of bytes written, exactly as
-// [Bid128ToAscii] does. It cannot fail; see [Bid128ToAscii] for what the
-// output guarantees.
-
 /*
 Dpd128ToAscii renders a DPD128 encoding into a caller-supplied buffer,
 allocating nothing.
@@ -1881,10 +1877,6 @@ format, and the canonical positive quiet NaN is the same bit pattern in both.
 func Bid128Parse(text string) (hi, lo uint64, err error) {
 	return parseInto(true, text)
 }
-
-// Dpd128Parse parses a decimal character sequence into a DPD128 encoding.
-// It accepts exactly the grammar [Bid128Parse] documents, and reports failure
-// the same way.
 
 /*
 Dpd128Parse parses a decimal character sequence into a DPD128 encoding.

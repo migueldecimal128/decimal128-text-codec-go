@@ -547,6 +547,8 @@ func binFromDeclets(declets uint64) uint64 {
 	multiplier := uint64(1)
 	for rest != 0 {
 		bin += dpdDecodeDeclet(rest&0x3FF) * multiplier
+		// The last iteration multiplies past 10^18 and the product is never
+		// used, since rest is zero by then. The reference wraps here too.
 		multiplier *= 1000
 		rest >>= 10
 	}
@@ -588,8 +590,6 @@ const (
 	sU64Div1e4 = 11
 	mask32     = 0xFFFFFFFF
 )
-
-const magicDiv1e8 = mU64Div1e8
 
 /*
  * Render exactly 8 decimal digits of dw, ending at offMaxx. Zero-pads. The
@@ -682,13 +682,13 @@ func u128ToAscii(digitPrintCount int, dw1, dw0 uint64, ascii []byte, off int) in
 	ich := off + digitPrintCount
 	remainingDigitCount := digitPrintCount
 	for dw1T != 0 {
-		q2 := mulhi64(dw1T, magicDiv1e8) >> sU64Div1e8
+		q2 := mulhi64(dw1T, mU64Div1e8) >> sU64Div1e8
 		r2 := dw1T - (q2 * 100000000)
 		s2 := (r2 << 32) | (dw0T >> 32)
-		q1 := mulhi64(s2, magicDiv1e8) >> sU64Div1e8
+		q1 := mulhi64(s2, mU64Div1e8) >> sU64Div1e8
 		r1 := s2 - (q1 * 100000000)
 		s1 := (r1 << 32) | (dw0T & mask32)
-		q0 := mulhi64(s1, magicDiv1e8) >> sU64Div1e8
+		q0 := mulhi64(s1, mU64Div1e8) >> sU64Div1e8
 		r0 := s1 - (q0 * 100000000)
 		dw0T = (q1 << 32) + q0
 		dw1T = q2
@@ -697,7 +697,7 @@ func u128ToAscii(digitPrintCount int, dw1, dw0 uint64, ascii []byte, off int) in
 		remainingDigitCount -= 8
 	}
 	for remainingDigitCount >= 8 {
-		t0 := mulhi64(dw0T, magicDiv1e8) >> sU64Div1e8
+		t0 := mulhi64(dw0T, mU64Div1e8) >> sU64Div1e8
 		r0 := dw0T - (t0 * 100000000)
 		dw0T = t0
 		render8DigitsBeforeIndex(r0, ascii, ich)

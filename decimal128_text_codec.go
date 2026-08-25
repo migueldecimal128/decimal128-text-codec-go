@@ -702,15 +702,15 @@ func u128ToAscii(digitPrintCount int, dw1, dw0 uint64, ascii []byte, off int) in
  * None of the optional leading characters live in the string data. The sign,
  * and the 's' that marks a signaling NaN, are each written unconditionally and
  * then overwritten by whatever follows when they are not wanted -- the trick
- * fnzToIntegerString already uses for the sign. That holds only because every
+ * fnzToIntegerAscii already uses for the sign. That holds only because every
  * optional character is a single byte at the front of the form: a spelling that
  * ever put one elsewhere would render wrong rather than fail to compile. The
- * one exception is written where it happens, in zerString's exponent form,
+ * one exception is written where it happens, in zerAscii's exponent form,
  * where the byte is a TRAILING '+' overwritten by AppendInt's own '-'.
  */
 const infinityText = "Infinity"
 
-func infString(out []byte, sign bool) int {
+func infAscii(out []byte, sign bool) int {
 	signLen := 0
 	if sign {
 		signLen = 1
@@ -724,7 +724,7 @@ func infString(out []byte, sign bool) int {
 
 const nanText = "NaN"
 
-func nanString(out []byte, sign, isSignaling bool, payloadHi, payloadLo uint64) int {
+func nanAscii(out []byte, sign, isSignaling bool, payloadHi, payloadLo uint64) int {
 	signLen := 0
 	if sign {
 		signLen = 1
@@ -767,10 +767,10 @@ func nanString(out []byte, sign, isSignaling bool, payloadHi, payloadLo uint64) 
  */
 const plainZero = "0.000000"
 
-// The exponent form's base. The '+' is not here: see zerString below.
+// The exponent form's base. The '+' is not here: see zerAscii below.
 const zeroExpText = "0E"
 
-func zerString(out []byte, sign bool, qExp int) int {
+func zerAscii(out []byte, sign bool, qExp int) int {
 	if qExp <= 0 && qExp >= -6 {
 		k := -qExp
 		zeroLen := 1
@@ -814,7 +814,7 @@ func zerString(out []byte, sign bool, qExp int) int {
 }
 
 // qExp == 0: a plain integer, no radix point and no exponent.
-func fnzToIntegerString(out []byte, sign bool, digitLen int, dw1, dw0 uint64) int {
+func fnzToIntegerAscii(out []byte, sign bool, digitLen int, dw1, dw0 uint64) int {
 	verify("a finite nonzero value has at least one digit", func() bool { return digitLen > 0 })
 	signLen := 0
 	if sign {
@@ -831,7 +831,7 @@ func fnzToIntegerString(out []byte, sign bool, digitLen int, dw1, dw0 uint64) in
  * Fixed-point form: leading zeros, then the coefficient digits shifted right
  * by one position to make room for the radix point.
  */
-func fnzToDecimalPointString(out []byte, sign bool, qExp, digitLen int, dw1, dw0 uint64) int {
+func fnzToDecimalPointAscii(out []byte, sign bool, qExp, digitLen int, dw1, dw0 uint64) int {
 	digitsRightOfDecimal := -qExp
 	leadingZeroCount := 1 + digitsRightOfDecimal - digitLen
 	if leadingZeroCount < 0 {
@@ -860,7 +860,7 @@ func fnzToDecimalPointString(out []byte, sign bool, qExp, digitLen int, dw1, dw0
  * Normalized scientific form. The exponent sign is always written, per the
  * GDAS to-scientific-string form: 1.234E+5, never 1.234E5.
  */
-func fnzToNormalizedScientificString(out []byte, sign bool, qExp, digitLen int, dw1, dw0 uint64) int {
+func fnzToNormalizedScientificAscii(out []byte, sign bool, qExp, digitLen int, dw1, dw0 uint64) int {
 	verify("a finite nonzero value has at least one digit", func() bool { return digitLen > 0 })
 	eExp := qExp + (digitLen - 1)
 	eExpAbs := eExp
@@ -910,16 +910,16 @@ func fnzToNormalizedScientificString(out []byte, sign bool, qExp, digitLen int, 
  * fixed-point when the adjusted exponent is at least -6,
  * scientific otherwise -- the GDAS auto-select rule.
  */
-func fnzString(out []byte, sign bool, qExp int, dw1, dw0 uint64) int {
+func fnzAscii(out []byte, sign bool, qExp int, dw1, dw0 uint64) int {
 	digitLen := calcDigitLen128(dw1, dw0)
 	eExp := qExp + (digitLen - 1)
 	if qExp == 0 {
-		return fnzToIntegerString(out, sign, digitLen, dw1, dw0)
+		return fnzToIntegerAscii(out, sign, digitLen, dw1, dw0)
 	}
 	if qExp <= 0 && eExp >= -6 {
-		return fnzToDecimalPointString(out, sign, qExp, digitLen, dw1, dw0)
+		return fnzToDecimalPointAscii(out, sign, qExp, digitLen, dw1, dw0)
 	}
-	return fnzToNormalizedScientificString(out, sign, qExp, digitLen, dw1, dw0)
+	return fnzToNormalizedScientificAscii(out, sign, qExp, digitLen, dw1, dw0)
 }
 
 /* --------------------------------------------------------------------------
@@ -951,13 +951,13 @@ func decodeBid128toAscii(out []byte, bid128Hi, bid128Lo uint64) int {
 		qExp = biasedExponentE - bias
 		coeffHi = 8 + uint64(combination&1)
 	case (combination >> (w5 - 5)) == 0x1E:
-		return infString(out, sign)
+		return infAscii(out, sign)
 	default:
 		verify("the remaining combination field is the NaN pattern", func() bool {
 			return (combination >> (w5 - 5)) == 0x1F
 		})
 		isSignaling := ((combination >> (w5 - 6)) & 1) != 0
-		return nanString(out, sign, isSignaling, coeffTHi, bid128Lo)
+		return nanAscii(out, sign, isSignaling, coeffTHi, bid128Lo)
 	}
 
 	dw1 := (coeffHi << (tWidth - 64)) | coeffTHi
@@ -968,9 +968,9 @@ func decodeBid128toAscii(out []byte, bid128Hi, bid128Lo uint64) int {
 	if (dw1|dw0) == 0 ||
 		dw1 > maxxCoeff34Hi ||
 		(dw1 == maxxCoeff34Hi && dw0 >= maxxCoeff34Lo) {
-		return zerString(out, sign, qExp)
+		return zerAscii(out, sign, qExp)
 	}
-	return fnzString(out, sign, qExp, dw1, dw0)
+	return fnzAscii(out, sign, qExp, dw1, dw0)
 }
 
 // Unpack a DPD128 encoding and hand the pieces to the same renderers.
@@ -999,7 +999,7 @@ func decodeDpd128toAscii(out []byte, dpd128Hi, dpd128Lo uint64) int {
 		qExp = ((expMSB << w) | expContinuation) - bias
 		d0 = 8 + uint64((combination>>w)&0x1)
 	case (combination >> (w5 - 5)) == 0x1E:
-		return infString(out, sign)
+		return infAscii(out, sign)
 	default:
 		verify("the remaining combination field is the NaN pattern", func() bool {
 			return (combination >> (w5 - 5)) == 0x1F
@@ -1029,12 +1029,12 @@ func decodeDpd128toAscii(out []byte, dpd128Hi, dpd128Lo uint64) int {
 	}
 
 	if isNaN {
-		return nanString(out, sign, isSignaling, dw1, dw0)
+		return nanAscii(out, sign, isSignaling, dw1, dw0)
 	}
 	if (dw1 | dw0) == 0 {
-		return zerString(out, sign, qExp)
+		return zerAscii(out, sign, qExp)
 	}
-	return fnzString(out, sign, qExp, dw1, dw0)
+	return fnzAscii(out, sign, qExp, dw1, dw0)
 }
 
 /* --------------------------------------------------------------------------

@@ -71,35 +71,6 @@ standard library.
 package decimal128textcodec
 
 /*
- * decimal128-text-codec-go
- *
- * Ported from decimal128-text-codec-c (decimal128_text_codec.c @ 3d78a7f),
- * itself a port of decimal128-text-codec-kotlin, which is the reference
- * implementation for the family. The shape follows the C closely enough to be
- * read side by side; where Go differs, the difference is noted at the point it
- * occurs. The four deliberate ones:
- *
- *  - the 128-bit primitives are math/bits (Mul64, Add64, LeadingZeros64).
- *    Go guarantees them on every target it compiles for, so the reference's
- *    four-partial-product decomposition -- and C's __int128 / __umulh /
- *    synthesize-from-limbs three-way split, and the whole portable build that
- *    exists to exercise it -- collapse to a call each.
- *  - the renderers write into the caller's *[MaxLen]byte and return a length,
- *    as the C port does. They return the length rather than out[:n] because a
- *    Go slice header carries a capacity this API has no use for: out[:n] would
- *    hand back cap == MaxLen, so appending to the result would silently write
- *    into the rest of the caller's buffer. Returning the length is also what
- *    the standard library does for this shape -- utf8.EncodeRune,
- *    binary.PutUvarint, hex.Encode.
- *  - parse returns (hi, lo, error) rather than writing through out-params. The
- *    family's contract -- the encoding is ALWAYS written, and is the canonical
- *    positive quiet NaN on failure -- is preserved exactly: a caller who
- *    discards the error still holds a legal IEEE 754-2019 datum. Multi-return
- *    is Go's out-param, so the finalize and parse chains thread values back
- *    the same way the Swift port's tuples do rather than taking pointers.
- *  - verify is gated by the `verify` build tag rather than a preprocessor
- *    define, and its predicate is a thunk. See the assertions section below.
- *
  * Everything exported is the four functions at the bottom of this file; the
  * rest is package-private, which is this language's spelling of the
  * reference's `private`.
@@ -1815,6 +1786,10 @@ payload >= 10^33 renders as no payload, both per IEEE 754-2019 section 3.5.2.
 	fmt.Printf("%s\n", buf[:n])
 */
 func Bid128ToAscii(out *[MaxLen]byte, hi, lo uint64) int {
+	// The length is returned rather than out[:n]: a slice header carries a
+	// capacity this API has no use for, so out[:n] would hand back
+	// cap == MaxLen and appending to the result would silently write into
+	// the rest of the caller's buffer.
 	return decodeBid128toAscii(out[:], hi, lo)
 }
 
@@ -1857,6 +1832,10 @@ section 3.5.2.
 	fmt.Printf("%s\n", buf[:n])
 */
 func Dpd128ToAscii(out *[MaxLen]byte, hi, lo uint64) int {
+	// The length is returned rather than out[:n]: a slice header carries a
+	// capacity this API has no use for, so out[:n] would hand back
+	// cap == MaxLen and appending to the result would silently write into
+	// the rest of the caller's buffer.
 	return decodeDpd128toAscii(out[:], hi, lo)
 }
 

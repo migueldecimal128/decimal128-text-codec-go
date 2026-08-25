@@ -927,7 +927,7 @@ func fnzString(out []byte, sign bool, qExp int, dw1, dw0 uint64) int {
  * ------------------------------------------------------------------------ */
 
 // Unpack a BID128 encoding, per IEEE 754-2019 3.5.2, and render it.
-func decodeBid128toString(out []byte, bid128Hi, bid128Lo uint64) int {
+func decodeBid128toAscii(out []byte, bid128Hi, bid128Lo uint64) int {
 	verify("the field widths tile the encoding", func() bool { return 1+w5+tWidth == 128 })
 
 	sign := (bid128Hi & signBit) != 0
@@ -974,7 +974,7 @@ func decodeBid128toString(out []byte, bid128Hi, bid128Lo uint64) int {
 }
 
 // Unpack a DPD128 encoding and hand the pieces to the same renderers.
-func decodeDpd128toString(out []byte, dpd128Hi, dpd128Lo uint64) int {
+func decodeDpd128toAscii(out []byte, dpd128Hi, dpd128Lo uint64) int {
 	const w = 12 // exponent continuation width
 
 	sign := (dpd128Hi & signBit) != 0
@@ -1736,14 +1736,14 @@ func encodeStringOrError(formatIsBid bool, str string) (hi, lo uint64, err error
  * ------------------------------------------------------------------------ */
 
 /*
-Bid128ToString renders a BID128 encoding as a decimal character sequence.
+Bid128ToAscii renders a BID128 encoding as a decimal character sequence.
 
 It writes the text into out and returns the number of bytes written; the text
 is out[:n]. Nothing is allocated, and [MaxLen] is part of the buffer's type, so
 an undersized buffer is a compile error rather than a runtime check.
 
 	var buf [decimal128textcodec.MaxLen]byte
-	n := decimal128textcodec.Bid128ToString(&buf, hi, lo)
+	n := decimal128textcodec.Bid128ToAscii(&buf, hi, lo)
 	fmt.Printf("%s\n", buf[:n])
 
 It cannot fail. Every 128-bit pattern renders: canonical encodings produce
@@ -1754,16 +1754,16 @@ The output preserves cohort information -- "1.00" and "1.0" are distinct
 outputs from distinct encodings of the same numerical value -- and always
 writes the exponent sign, as in "6.02E+23".
 */
-func Bid128ToString(out *[MaxLen]byte, hi, lo uint64) int {
-	return decodeBid128toString(out[:], hi, lo)
+func Bid128ToAscii(out *[MaxLen]byte, hi, lo uint64) int {
+	return decodeBid128toAscii(out[:], hi, lo)
 }
 
-// Dpd128ToString renders a DPD128 encoding as a decimal character sequence.
+// Dpd128ToAscii renders a DPD128 encoding as a decimal character sequence.
 // It writes into out and returns the number of bytes written, exactly as
-// [Bid128ToString] does. It cannot fail; see [Bid128ToString] for what the
+// [Bid128ToAscii] does. It cannot fail; see [Bid128ToAscii] for what the
 // output guarantees.
-func Dpd128ToString(out *[MaxLen]byte, hi, lo uint64) int {
-	return decodeDpd128toString(out[:], hi, lo)
+func Dpd128ToAscii(out *[MaxLen]byte, hi, lo uint64) int {
+	return decodeDpd128toAscii(out[:], hi, lo)
 }
 
 /*

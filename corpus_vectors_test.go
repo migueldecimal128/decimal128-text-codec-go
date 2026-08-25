@@ -169,12 +169,12 @@ func runDecodeTable(t *testing.T, rows []corpusRow, label string) {
 	t.Helper()
 	var buf [codec.MaxLen]byte
 	for _, row := range rows {
-		n := codec.Bid128ToString(&buf, row.bidHi, row.bidLo)
+		n := codec.Bid128ToAscii(&buf, row.bidHi, row.bidLo)
 		if bidText := string(buf[:n]); bidText != row.text {
 			t.Errorf("%s line %d: bid #%s rendered <%s>, expected <%s>",
 				label, row.lineNumber, row.bidHex(), bidText, row.text)
 		}
-		n = codec.Dpd128ToString(&buf, row.dpdHi, row.dpdLo)
+		n = codec.Dpd128ToAscii(&buf, row.dpdHi, row.dpdLo)
 		if dpdText := string(buf[:n]); dpdText != row.text {
 			t.Errorf("%s line %d: dpd #%s rendered <%s>, expected <%s>",
 				label, row.lineNumber, row.dpdHex(), dpdText, row.text)

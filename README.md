@@ -17,8 +17,8 @@ import codec "github.com/migueldecimal128/decimal128-text-codec-go"
 
 // bits -> text, into the caller's buffer
 var buf [codec.MaxLen]byte
-n := codec.Bid128ToString(&buf, hi, lo)   // the text is buf[:n]
-m := codec.Dpd128ToString(&buf, hi, lo)   // the text is buf[:m]
+n := codec.Bid128ToAscii(&buf, hi, lo)   // the text is buf[:n]
+m := codec.Dpd128ToAscii(&buf, hi, lo)   // the text is buf[:m]
 
 // text -> bits
 hi, lo, err := codec.Bid128Parse("1.23E+45")

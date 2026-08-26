@@ -61,7 +61,7 @@ such as network or file data.
 
 All functions are pure and safe for concurrent use.
 
-# In this port
+# This implementation
 
 Nothing here allocates. The renderers write into a caller-owned [MaxLen]byte
 and return a length; the parsers return the encoding as two words plus a
@@ -85,7 +85,7 @@ import (
 /* ---------------------------------------------------------------------------
  * Internal-state assertions
  *
- * Two mechanisms, matching the sibling ports.
+ * Two mechanisms.
  *
  *   verify(what, cond)  internal-consistency claims -- unreachable for ANY
  *                       input, so a failure is a codec bug rather than bad
@@ -182,8 +182,8 @@ an error in the arithmetic above would quietly consume the slack instead of
 firing.
 
 A caller sizes their buffer with it, and *[MaxLen]byte puts it in the type, so
-an undersized buffer is a compile error. The C port's D128TEXT_MAX_LEN is one
-larger, because it writes a NUL and this does not.
+an undersized buffer is a compile error. No NUL is written, so no room is
+reserved for one.
 */
 const MaxLen = 42
 
@@ -197,7 +197,7 @@ func mulhi64(x, y uint64) uint64 {
 	return hi
 }
 
-// Leading zero count, 64 for zero -- matching Kotlin's countLeadingZeroBits.
+// Leading zero count, 64 for zero.
 func clz64(v uint64) int {
 	return bits.LeadingZeros64(v)
 }
@@ -213,9 +213,8 @@ func clz64(v uint64) int {
  * and (bitLen * 1233) >> 12 <= 34. It doubles as the 5^n source for the
  * divide kernel, since 10^n >> n is exactly 5^n; there is no POW5 table.
  *
- * The reference calls this POW10; here it carries the Table suffix because Go
- * has no separate namespace for constants, and `pow10` is a parameter name
- * throughout the kernels below.
+ * This carries the Table suffix because Go has no separate namespace for
+ * constants, and `pow10` is a parameter name throughout the kernels below.
  */
 var pow10Table = [(34 + 1) * 2]uint64{
 	1, 0, // 10^0
@@ -344,7 +343,7 @@ func u113DivModPow10Max9(dwHi, dwLo uint64, pow10 int) (qHi, qLo, rem uint64) {
 const (
 	exact   = 0
 	ltHalf  = 1
-	tieHalf = 2 // the reference's HALF; `half` alone reads as a quantity in Go
+	tieHalf = 2 // `half` alone would read as a quantity in Go
 	gtHalf  = 3
 )
 
@@ -429,16 +428,16 @@ func u128ScaleDownPow10(dw1, dw0 uint64, truncationNeeded int) (outHi, outLo uin
  * binary integer, DPD as a leading digit plus eleven declets.
  *
  * Both directions are pure boolean arithmetic (Cowlishaw's dpd2bcd and
- * bcd2dpd) rather than lookup tables, matching the reference.
+ * bcd2dpd) rather than lookup tables.
  * ------------------------------------------------------------------------ */
 
 /*
  * Decode a 10-bit declet (bits p q r s t u v w x y) into 0..999. Accepts the
  * 24 non-canonical declets as well as the 1000 canonical ones.
  *
- * The reference's ~t is spelled &^ here: on operands already reduced to 0 or 1
- * the two agree, and Go's and-not says what is meant without complementing 63
- * bits that are then masked away.
+ * A complement of t is spelled &^ here: on operands already reduced to 0 or 1
+ * it agrees with ^, and Go's and-not says what is meant without complementing
+ * 63 bits that are then masked away.
  */
 func dpdDecodeDeclet(declet uint64) uint64 {
 	verify("the declet is 10 bits", func() bool { return declet <= 1023 })
@@ -548,7 +547,7 @@ func binFromDeclets(declets uint64) uint64 {
 	for rest != 0 {
 		bin += dpdDecodeDeclet(rest&0x3FF) * multiplier
 		// The last iteration multiplies past 10^18 and the product is never
-		// used, since rest is zero by then. The reference wraps here too.
+		// used, since rest is zero by then, so it is let wrap.
 		multiplier *= 1000
 		rest >>= 10
 	}
@@ -827,8 +826,7 @@ func zerAscii(out []byte, sign bool, qExp int) int {
 	copy(out[signLen:], zeroExpText)
 	out[signLen+len(zeroExpText)] = '+' // overwritten by AppendInt's '-' when qExp < 0
 	// strconv.AppendInt writes in place: out[:baseLen] keeps the buffer's
-	// capacity, so nothing is reallocated. It stands in for the C port's
-	// hand-rolled appendInt, which itself replaced the reference's Int.toString.
+	// capacity, so nothing is reallocated.
 	return len(strconv.AppendInt(out[:baseLen], int64(qExp), 10))
 }
 
@@ -1336,7 +1334,7 @@ func roundAndFinalizeFinite(formatIsBid, sign bool, qExpIn int, dw1In, dw0In uin
 	 * a path that has never once executed -- and therefore has never been
 	 * verified to work -- it is removed and the invariant is enforced.
 	 *
-	 * Measured in the C port: zero occurrences across the 87k-row corpus and
+	 * Measured: zero occurrences across the 87k-row corpus and
 	 * 400,000 random numerals, and across 76,280 finalizer calls driven by
 	 * inputs of up to 5,000 digits, where the widest coefficient ever seen was
 	 * 34.
@@ -1345,9 +1343,8 @@ func roundAndFinalizeFinite(formatIsBid, sign bool, qExpIn int, dw1In, dw0In uin
 	 * because falling through would encode an out-of-range coefficient
 	 * silently. It cannot fire on a consumer's data -- no input reaches it --
 	 * only on a future caller that breaks the invariant, which is exactly when
-	 * a loud failure is what you want. A port that parses differently, or a
-	 * caller that is not a parser, needs the truncation step back; it is in
-	 * the reference implementation and in every full port's Finalize.
+	 * a loud failure is what you want. A caller that is not a parser, or one
+	 * that parses differently, needs the truncation step back.
 	 */
 	demand("the coefficient is at most 34 digits", calcDigitLen128(dw1In, dw0In) <= 34)
 
@@ -1402,9 +1399,9 @@ func roundAndFinalizeFinite(formatIsBid, sign bool, qExpIn int, dw1In, dw0In uin
  * is also what lets the corpus assert that the two formats reject an input for
  * the same reason.
  *
- * The two Infinity spellings differ in case, matching the reference and every
- * sibling port: the lowercase one reports a character that is not part of the
- * word, the capitalized one a word that ended too early.
+ * The two Infinity spellings differ in case deliberately: the lowercase one
+ * reports a character that is not part of the word, the capitalized one a word
+ * that ended too early.
  */
 var (
 	errEmptyString        = errors.New("empty string")
@@ -1421,29 +1418,22 @@ var (
 )
 
 /*
- * The input, read one byte at a time. next returns the byte at the cursor and
- * advances, except at the end -- and at an embedded NUL -- where it stays put
- * and keeps returning zero.
+ * The code of the byte at index, or -1 past the end of the string.
  *
- * That is how the reference's getOrNul sentinel, which reads NUL forever past
- * the end of a Kotlin String, translates to a Go string. The C port spells the
- * same thing as a string pointer and an index; a small cursor is the shape
- * decimal128-go already uses for its own parser.
+ * The parsers walk the input as byte codes, so end-of-input is one more code
+ * value rather than a bound test at every read. -1 is not a byte, so a NUL in
+ * the string stays an ordinary -- and invalid -- input byte rather than
+ * doubling as the terminator: a Go string carries its own length and can hold
+ * one, and it is rejected.
+ *
+ * In Go ++ is a statement rather than an expression, so the advance is its own
+ * line at each call rather than riding in the index.
  */
-type textCursor struct {
-	str string
-	pos int
-}
-
-func (t *textCursor) next() byte {
-	if t.pos >= len(t.str) {
-		return 0
+func codeAt(str string, index int) int {
+	if index >= 0 && index < len(str) {
+		return int(str[index])
 	}
-	c := t.str[t.pos]
-	if c != 0 {
-		t.pos++
-	}
-	return c
+	return -1
 }
 
 /*
@@ -1455,11 +1445,12 @@ func (t *textCursor) next() byte {
  * ties-to-even rounding that follows. Exponent magnitudes clamp to 9999,
  * which is enough for finalize to detect overflow or underflow.
  *
- * The reference flushes leading zeros branchlessly, adding a comparison
- * coerced to an integer; Go has no bool-to-int conversion, so the two counters
- * below say the same thing with an if.
+ * Leading zeros can be flushed branchlessly by coercing a comparison to an
+ * integer; Go has no bool-to-int conversion, so the two counters below say the
+ * same thing with an if.
  */
-func parseFiniteValueText(formatIsBid, sign bool, chFirst byte, t *textCursor) (hi, lo uint64, err error) {
+func parseFiniteValueText(formatIsBid, sign bool, chFirst int, str string, startPos int) (hi, lo uint64, err error) {
+	pos := startPos
 	residue := exact
 
 	hasCoefficientDigit := false // any digit at all, including zero
@@ -1471,7 +1462,7 @@ func parseFiniteValueText(formatIsBid, sign bool, chFirst byte, t *textCursor) (
 	prevWasDigit := false
 	afterUnderscore := false
 
-	verify("the first character was already read", func() bool { return chFirst != 0 })
+	verify("the first character was already read", func() bool { return chFirst != -1 })
 	ch := chFirst
 	fractionalDigitCount := 0
 	accum19a := uint64(0)
@@ -1481,7 +1472,7 @@ func parseFiniteValueText(formatIsBid, sign bool, chFirst byte, t *textCursor) (
 	for (ch >= '0' && ch <= '9') || ch == '.' || ch == '_' {
 		switch {
 		case ch >= '0' && ch <= '9':
-			d := int(ch - '0')
+			d := ch - '0'
 			hasCoefficientDigit = true
 			// count while flushing leading zeros
 			if (significantDigitCount | d) != 0 {
@@ -1518,7 +1509,8 @@ func parseFiniteValueText(formatIsBid, sign bool, chFirst byte, t *textCursor) (
 			hasDot = true
 			prevWasDigit = false
 		}
-		ch = t.next()
+		ch = codeAt(str, pos)
+		pos++
 	}
 	if afterUnderscore {
 		return 0, 0, errUnderscoreLocation
@@ -1528,10 +1520,12 @@ func parseFiniteValueText(formatIsBid, sign bool, chFirst byte, t *textCursor) (
 	}
 	// this path has at least one digit
 	if ch == 'E' || ch == 'e' {
-		ch = t.next()
+		ch = codeAt(str, pos)
+		pos++
 		if ch == '+' || ch == '-' {
 			expSign = (ch == '-')
-			ch = t.next()
+			ch = codeAt(str, pos)
+			pos++
 		}
 		hasExpDigit := false
 		expSignificantDigitCount := 0
@@ -1546,7 +1540,7 @@ func parseFiniteValueText(formatIsBid, sign bool, chFirst byte, t *textCursor) (
 				afterUnderscore = true
 			} else {
 				hasExpDigit = true
-				eDigit := int(ch - '0')
+				eDigit := ch - '0'
 				// count while flushing leading zeros
 				if (expSignificantDigitCount | eDigit) != 0 {
 					expSignificantDigitCount++
@@ -1559,7 +1553,8 @@ func parseFiniteValueText(formatIsBid, sign bool, chFirst byte, t *textCursor) (
 				prevWasDigit = true
 				afterUnderscore = false
 			}
-			ch = t.next()
+			ch = codeAt(str, pos)
+			pos++
 		}
 		if afterUnderscore {
 			return 0, 0, errUnderscoreLocation
@@ -1572,7 +1567,7 @@ func parseFiniteValueText(formatIsBid, sign bool, chFirst byte, t *textCursor) (
 			exp = 9999
 		}
 	}
-	if ch != 0 {
+	if ch != -1 {
 		return 0, 0, errUnexpectedChar
 	}
 
@@ -1605,22 +1600,24 @@ func parseFiniteValueText(formatIsBid, sign bool, chFirst byte, t *textCursor) (
 }
 
 // Parse Infinity, or its three-letter abbreviation Inf, case-insensitively.
-func parseInfinityText(sign bool, chFirst byte, t *textCursor) (hi, lo uint64, err error) {
+func parseInfinityText(sign bool, chFirst int, str string, startPos int) (hi, lo uint64, err error) {
+	pos := startPos
 	ch := chFirst
-	chPrevCode := byte(0)
+	chPrevCode := 0
 	const target = "infinity"
 	for i := 0; i < 8; i++ {
-		targetCode := target[i]
+		targetCode := int(target[i])
 		if (ch | 0x20) != targetCode {
-			if ch == 0 {
+			if ch == -1 {
 				break
 			}
 			return 0, 0, errParsingInfinityLC
 		}
 		chPrevCode = ch | 0x20
-		ch = t.next()
+		ch = codeAt(str, pos)
+		pos++
 	}
-	if ch != 0 || (chPrevCode != 'f' && chPrevCode != 'y') {
+	if ch != -1 || (chPrevCode != 'f' && chPrevCode != 'y') {
 		return 0, 0, errParsingInfinity
 	}
 	s := uint64(0)
@@ -1641,41 +1638,45 @@ func parseInfinityText(sign bool, chFirst byte, t *textCursor) (hi, lo uint64, e
  * must be the last character of the input. So NaN(1)2(3), NaN(1, NaN(1] and
  * NaN() are all rejected, and NaN[1] and NaN{1} are not this form at all.
  *
- * The full decimal128 ports accept the same spelling; the codecs had it first,
- * and the ports took it on 2026-08-23. It exists because C's own strtod reads
- * NAN(n-char-sequence), so the spelling reaches a caller from the platform
- * itself -- Go's strconv.ParseFloat does not read it, but the codec family is
- * one grammar across eight languages and this is part of it. The resemblance to
+ * This spelling exists because C's own strtod reads
+ * NAN(n-char-sequence), so it reaches a caller from the platform
+ * itself -- Go's strconv.ParseFloat does not read it, but it is part of the
+ * grammar accepted here. The resemblance to
  * strtod stops at the parentheses: its sequence is letters, digits and
  * underscores read as an implementation-defined integer, while a decimal128
  * payload is decimal digits.
  */
-func parseNanText(formatIsBid, sign bool, chFirst byte, t *textCursor) (hi, lo uint64, err error) {
+func parseNanText(formatIsBid, sign bool, chFirst int, str string, startPos int) (hi, lo uint64, err error) {
+	pos := startPos
 	ch := chFirst
 	hasS := (ch | 0x20) == 's'
 	hasQ := (ch | 0x20) == 'q'
 	if hasQ || hasS {
-		ch = t.next()
+		ch = codeAt(str, pos)
+		pos++
 	}
 	if ((ch | 0x20) != 'n') ||
-		((t.next() | 0x20) != 'a') ||
-		((t.next() | 0x20) != 'n') {
+		((codeAt(str, pos) | 0x20) != 'a') ||
+		((codeAt(str, pos+1) | 0x20) != 'n') {
 		return 0, 0, errParsingNaN
 	}
+	pos += 2
 
 	payloadDw0 := uint64(0)
 	payloadDw1 := uint64(0)
-	ch = t.next()
+	ch = codeAt(str, pos)
+	pos++
 	hasParen := ch == '('
 	if hasParen {
-		ch = t.next()
+		ch = codeAt(str, pos)
+		pos++
 	}
-	if hasParen || ch != 0 {
+	if hasParen || ch != -1 {
 		accumDigitCount := 0
 		accum19a := uint64(0)
 		accum19b := uint64(0)
 		for ch >= '0' && ch <= '9' {
-			d := int(ch - '0')
+			d := ch - '0'
 			// Count every digit written, leading zeros included. The 33-digit
 			// limit is a limit on the payload as spelled, not on its
 			// significant digits, so "NaN" followed by forty zeros and a one is
@@ -1689,7 +1690,8 @@ func parseNanText(formatIsBid, sign bool, chFirst byte, t *textCursor) (hi, lo u
 			} else {
 				accum19b = (accum19b * 10) + uint64(d)
 			}
-			ch = t.next()
+			ch = codeAt(str, pos)
+			pos++
 		}
 		if accumDigitCount == 0 {
 			if hasParen {
@@ -1700,15 +1702,15 @@ func parseNanText(formatIsBid, sign bool, chFirst byte, t *textCursor) (hi, lo u
 		if hasParen {
 			// the ')' must be present and must end the input
 			if ch != ')' {
-				if ch == 0 {
+				if ch == -1 {
 					return 0, 0, errParsingNaN
 				}
 				return 0, 0, errNaNPayloadChar
 			}
-			if t.next() != 0 {
+			if codeAt(str, pos) != -1 {
 				return 0, 0, errParsingNaN
 			}
-		} else if ch != 0 {
+		} else if ch != -1 {
 			return 0, 0, errNaNPayloadChar
 		}
 		if accumDigitCount > 33 {
@@ -1728,24 +1730,26 @@ func parseNanText(formatIsBid, sign bool, chFirst byte, t *textCursor) (hi, lo u
 
 // Read the optional sign, then dispatch on the leading character.
 func encodeStringOrError(formatIsBid bool, str string) (hi, lo uint64, err error) {
-	t := textCursor{str: str}
-	chFirst := t.next()
+	pos := 0
+	chFirst := codeAt(str, pos)
+	pos++
 	ch := chFirst
 	sign := ch == '-'
 	if ch == '+' || ch == '-' {
-		ch = t.next()
+		ch = codeAt(str, pos)
+		pos++
 	}
 	if (ch >= '0' && ch <= '9') || ch == '.' {
-		return parseFiniteValueText(formatIsBid, sign, ch, &t)
+		return parseFiniteValueText(formatIsBid, sign, ch, str, pos)
 	}
 	chLower := ch | 0x20
 	if chLower == 'i' {
-		return parseInfinityText(sign, ch, &t)
+		return parseInfinityText(sign, ch, str, pos)
 	}
 	if chLower == 'n' || chLower == 's' || chLower == 'q' {
-		return parseNanText(formatIsBid, sign, ch, &t)
+		return parseNanText(formatIsBid, sign, ch, str, pos)
 	}
-	if chFirst == 0 {
+	if chFirst == -1 {
 		return 0, 0, errEmptyString
 	}
 	return 0, 0, errInvalidFormat

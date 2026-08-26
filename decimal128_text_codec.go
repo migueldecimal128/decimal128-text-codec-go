@@ -1398,10 +1398,6 @@ func roundAndFinalizeFinite(formatIsBid, sign bool, qExpIn int, dw1In, dw0In uin
  * would turn every one of these strings into API. Sharing one value per failure
  * is also what lets the corpus assert that the two formats reject an input for
  * the same reason.
- *
- * The two Infinity spellings differ in case deliberately: the lowercase one
- * reports a character that is not part of the word, the capitalized one a word
- * that ended too early.
  */
 var (
 	errEmptyString        = errors.New("empty string")
@@ -1411,7 +1407,6 @@ var (
 	errNoCoefficientDigit = errors.New("no coefficient digit")
 	errNoExponentDigit    = errors.New("no exponent digit")
 	errUnderscoreLocation = errors.New("invalid underscore location")
-	errParsingInfinityLC  = errors.New("failure parsing infinity")
 	errParsingInfinity    = errors.New("failure parsing Infinity")
 	errParsingNaN         = errors.New("failure parsing NaN")
 	errNaNPayloadChar     = errors.New("non-digit NaN payload character")
@@ -1611,7 +1606,7 @@ func parseInfinityText(sign bool, chFirst int, str string, startPos int) (hi, lo
 			if ch == -1 {
 				break
 			}
-			return 0, 0, errParsingInfinityLC
+			return 0, 0, errParsingInfinity
 		}
 		chPrevCode = ch | 0x20
 		ch = codeAt(str, pos)

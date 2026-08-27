@@ -111,6 +111,10 @@ func TestErrorVectorsAreRejectedByBothFormats(t *testing.T) {
 			t.Errorf("error line %d: the formats disagree on <%s>: <%v> vs <%v>",
 				row.lineNumber, row.text, bidErr, dpdErr)
 		}
+		if bidErr != nil && bidErr.Error() != row.status {
+			t.Errorf("error line %d: <%s> returned %v, corpus says %s",
+				row.lineNumber, row.text, bidErr, row.status)
+		}
 		if bidHi != row.bidHi || bidLo != row.bidLo {
 			t.Errorf("error line %d: bid <%s> left %s, expected %s",
 				row.lineNumber, row.text, hex32(bidHi, bidLo), row.bidHex())

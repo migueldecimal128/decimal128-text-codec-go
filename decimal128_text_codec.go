@@ -1400,16 +1400,15 @@ func roundAndFinalizeFinite(formatIsBid, sign bool, qExpIn int, dw1In, dw0In uin
  * the same reason.
  */
 var (
-	errEmptyString        = errors.New("empty string")
-	errInvalidFormat      = errors.New("invalid format")
-	errUnexpectedChar     = errors.New("unexpected char")
-	errDoubleRadixDot     = errors.New("double radix dot")
-	errNoCoefficientDigit = errors.New("no coefficient digit")
-	errNoExponentDigit    = errors.New("no exponent digit")
-	errUnderscoreLocation = errors.New("invalid underscore location")
-	errParsingInfinity    = errors.New("failure parsing Infinity")
-	errParsingNaN         = errors.New("failure parsing NaN")
-	errNaNPayloadChar     = errors.New("non-digit NaN payload character")
+	errEmptyString        = errors.New("EMPTY_STRING")
+	errInvalidFormat      = errors.New("INVALID_FORMAT")
+	errUnexpectedChar     = errors.New("UNEXPECTED_CHAR")
+	errDoubleRadixDot     = errors.New("DOUBLE_DOT")
+	errNoCoefficientDigit = errors.New("NO_COEFFICIENT_DIGIT")
+	errNoExponentDigit    = errors.New("NO_EXPONENT_DIGIT")
+	errUnderscoreLocation = errors.New("INVALID_UNDERSCORE_LOCATION")
+	errParsingInfinity    = errors.New("FAILURE_PARSING_INFINITY")
+	errParsingNaN         = errors.New("FAILURE_PARSING_NAN")
 )
 
 /*
@@ -1692,7 +1691,7 @@ func parseNanText(formatIsBid, sign bool, chFirst int, str string, startPos int)
 			if hasParen {
 				return 0, 0, errParsingNaN
 			}
-			return 0, 0, errNaNPayloadChar
+			return 0, 0, errParsingNaN
 		}
 		if hasParen {
 			// the ')' must be present and must end the input
@@ -1700,13 +1699,13 @@ func parseNanText(formatIsBid, sign bool, chFirst int, str string, startPos int)
 				if ch == -1 {
 					return 0, 0, errParsingNaN
 				}
-				return 0, 0, errNaNPayloadChar
+				return 0, 0, errParsingNaN
 			}
 			if codeAt(str, pos) != -1 {
 				return 0, 0, errParsingNaN
 			}
 		} else if ch != -1 {
-			return 0, 0, errNaNPayloadChar
+			return 0, 0, errParsingNaN
 		}
 		if accumDigitCount > 33 {
 			payloadDw0 = 0
@@ -1841,7 +1840,11 @@ Returns the encoding as hi and lo plus an error. On failure the error is
 non-nil and the encoding is the canonical positive quiet NaN, so a caller who
 discards the error still holds a legal IEEE 754-2019 datum rather than a zero
 value that means something else. The error's text is a human-readable message;
-its exact wording is not part of the contract and may change between versions.
+its text is the engine's ParseStatus name for the failure -- EMPTY_STRING,
+INVALID_FORMAT, UNEXPECTED_CHAR, DOUBLE_DOT, NO_COEFFICIENT_DIGIT,
+NO_EXPONENT_DIGIT, INVALID_UNDERSCORE_LOCATION, FAILURE_PARSING_INFINITY or
+FAILURE_PARSING_NAN -- and the conformance suite asserts it against the shared
+corpus, so it is part of the contract.
 
 Accepted input:
 
@@ -1884,7 +1887,11 @@ Returns the encoding as hi and lo plus an error. On failure the error is
 non-nil and the encoding is the canonical positive quiet NaN, so a caller who
 discards the error still holds a legal IEEE 754-2019 datum rather than a zero
 value that means something else. The error's text is a human-readable message;
-its exact wording is not part of the contract and may change between versions.
+its text is the engine's ParseStatus name for the failure -- EMPTY_STRING,
+INVALID_FORMAT, UNEXPECTED_CHAR, DOUBLE_DOT, NO_COEFFICIENT_DIGIT,
+NO_EXPONENT_DIGIT, INVALID_UNDERSCORE_LOCATION, FAILURE_PARSING_INFINITY or
+FAILURE_PARSING_NAN -- and the conformance suite asserts it against the shared
+corpus, so it is part of the contract.
 
 Accepted input:
 

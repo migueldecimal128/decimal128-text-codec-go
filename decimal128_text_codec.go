@@ -95,12 +95,13 @@ import (
  *                       panic inside a library on data they do not control.
  *                       `go test -tags verify` arms them, and CI runs that.
  *
- *   demand(what, cond)  claims that must survive into a shipping build. In C
- *                       these guard writes into the caller's buffer, which Go
- *                       bounds-checks for us; what is left is the coefficient-
- *                       width invariant standing in for the removed precision-
- *                       truncation step, where falling through would silently
- *                       encode an out-of-range coefficient.
+ *   demand(what, cond)  claims that must survive into a shipping build: the
+ *                       buffer-sizing guards, which are what make MaxLen a
+ *                       checked bound rather than a comment, and the
+ *                       coefficient-width invariant standing in for the
+ *                       removed precision-truncation step, where falling
+ *                       through would silently encode an out-of-range
+ *                       coefficient.
  *
  * Go has no macros and no @autoclosure, so verify's condition is spelled as a
  * thunk at the call site: with the tag off the call is inlined to nothing and
@@ -1632,7 +1633,7 @@ func parseInfinityText(sign bool, chFirst int, str string, startPos int) (hi, lo
  * must be the last character of the input. So NaN(1)2(3), NaN(1, NaN(1] and
  * NaN() are all rejected, and NaN[1] and NaN{1} are not this form at all.
  *
- * This spelling exists because C's own strtod reads
+ * This spelling exists because the platform's own strtod reads
  * NAN(n-char-sequence), so it reaches a caller from the platform
  * itself -- Go's strconv.ParseFloat does not read it, but it is part of the
  * grammar accepted here. The resemblance to

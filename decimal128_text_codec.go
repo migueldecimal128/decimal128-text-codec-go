@@ -95,13 +95,12 @@ import (
  *                       panic inside a library on data they do not control.
  *                       `go test -tags verify` arms them, and CI runs that.
  *
- *   demand(what, cond)  claims that must survive into a shipping build: the
- *                       buffer-sizing guards, which are what make MaxLen a
- *                       checked bound rather than a comment, and the
- *                       coefficient-width invariant standing in for the
- *                       removed precision-truncation step, where falling
- *                       through would silently encode an out-of-range
- *                       coefficient.
+ *   demand(what, cond)  claims that must survive into a shipping build: that
+ *                       the caller's buffer is at least MaxLen, checked once
+ *                       on entry to each decoder, and the coefficient-width
+ *                       invariant standing in for the removed precision-
+ *                       truncation step, where falling through would
+ *                       silently encode an out-of-range coefficient.
  *
  * Go has no macros, so verify's condition is spelled as a thunk at the call
  * site: with the tag off the call is inlined to nothing and the never-called
@@ -176,10 +175,12 @@ the radix point and the first significant digit. The exponent field cannot
 exceed four digits inside decimal128's range, so neither number can drift
 without the format itself changing.
 
-Every write in the renderers is guarded against this bound. Sizing it exactly
-rather than generously is what turns those guards into real checks: with slack,
-an error in the arithmetic above would quietly consume the slack instead of
-firing.
+The renderers are checked against this bound once, on entry, rather than at
+every write: the buffer is confirmed to be at least this long and the forms
+above are what guarantee nothing longer is produced. Sizing it exactly rather
+than generously is what keeps the two halves of that argument in contact; with
+slack, an error in the arithmetic above would quietly consume the slack instead
+of showing up.
 
 A caller sizes their buffer with it, and *[MaxLen]byte puts it in the type, so
 an undersized buffer is a compile error. No NUL is written, so no room is
@@ -619,7 +620,6 @@ func render8DigitsBeforeIndex(dw uint64, ascii []byte, offMaxx int) {
 	g := (gh * mU32Div1e1) >> sU32Div1e1
 	h := gh - (g * 10)
 
-	demand("the eight digits are inside the buffer", offMaxx >= 8)
 	ascii[offMaxx-8] = byte('0' + a)
 	ascii[offMaxx-7] = byte('0' + b)
 	ascii[offMaxx-6] = byte('0' + c)
@@ -638,7 +638,6 @@ func renderTailDigitsBeforeIndex(renderDigitCount int, dw uint64, ascii []byte, 
 	t := dw
 	remainingDigitCount := renderDigitCount
 	ib := offMaxx
-	demand("the digits are inside the buffer", offMaxx-renderDigitCount >= 0)
 	for remainingDigitCount >= 4 {
 		t0 := mulhi64(t, mU64Div1e4) >> sU64Div1e4
 		abcd := t - (t0 * 10000)
@@ -734,7 +733,6 @@ func infAscii(out []byte, sign bool) int {
 		signLen = 1
 	}
 	totalLen := signLen + len(infinityText)
-	demand("Infinity fits the buffer", totalLen <= MaxLen)
 	out[0] = '-' // overwritten by the 'I' when unsigned
 	copy(out[signLen:], infinityText)
 	return totalLen
@@ -760,13 +758,11 @@ func nanAscii(out []byte, sign, isSignaling bool, payloadHi, payloadLo uint64) i
 		// non-canonical payload, IEEE 754-2019 3.5.2 c) 2) -- read as zero
 		payloadHi > maxPayloadHi ||
 		(payloadHi == maxPayloadHi && payloadLo > maxPayloadLo) {
-		demand("the bare NaN fits the buffer", baseLen <= MaxLen)
 		copy(out[wordOff:], nanText)
 		return baseLen
 	}
 	digitLen := calcDigitLen128(payloadHi, payloadLo)
 	totalLen := baseLen + digitLen
-	demand("the NaN payload fits the buffer", totalLen <= MaxLen)
 	copy(out[wordOff:], nanText)
 	u128ToAscii(digitLen, payloadHi, payloadLo, out, baseLen)
 	return totalLen
@@ -800,7 +796,6 @@ func zerAscii(out []byte, sign bool, qExp int) int {
 			signLen = 1
 		}
 		totalLen := signLen + zeroLen
-		demand("the plain zero fits the buffer", totalLen <= MaxLen)
 		out[0] = '-' // overwritten by the '0' when unsigned
 		copy(out[signLen:], plainZero[:zeroLen])
 		return totalLen
@@ -821,7 +816,6 @@ func zerAscii(out []byte, sign bool, qExp int) int {
 		plusLen = 1
 	}
 	baseLen := signLen + len(zeroExpText) + plusLen
-	demand("the exponent-form zero fits the buffer", baseLen+6 <= MaxLen)
 	out[0] = '-' // overwritten by the '0' when unsigned
 	copy(out[signLen:], zeroExpText)
 	out[signLen+len(zeroExpText)] = '+' // overwritten by AppendInt's '-' when qExp < 0
@@ -838,7 +832,6 @@ func fnzToIntegerAscii(out []byte, sign bool, digitLen int, dw1, dw0 uint64) int
 		signLen = 1
 	}
 	totalLen := signLen + digitLen
-	demand("the integer form fits the buffer", totalLen <= MaxLen)
 	out[0] = '-' // overwritten by the first digit when unsigned
 	u128ToAscii(digitLen, dw1, dw0, out, signLen)
 	return totalLen
@@ -860,7 +853,6 @@ func fnzToDecimalPointAscii(out []byte, sign bool, qExp, digitLen int, dw1, dw0 
 	}
 	decimalPointLen := 1
 	totalLen := signLen + leadingZeroCount + decimalPointLen + digitLen
-	demand("the fixed-point form fits the buffer", totalLen <= MaxLen)
 	out[0] = '-'
 	for i := signLen; i <= leadingZeroCount; i++ { // one extra, overwritten below
 		out[i] = '0'
@@ -908,7 +900,6 @@ func fnzToNormalizedScientificAscii(out []byte, sign bool, qExp, digitLen int, d
 		expDigitLen = 2
 	}
 	totalLen := signLen + decimalPointLen + digitLen + expELen + expSignLen + expDigitLen
-	demand("the scientific form fits the buffer", totalLen <= MaxLen)
 	out[0] = '-'
 	u128ToAscii(digitLen, dw1, dw0, out, signLen+decimalPointLen)
 	if decimalPointLen > 0 {
@@ -946,6 +937,13 @@ func fnzAscii(out []byte, sign bool, qExp int, dw1, dw0 uint64) int {
 // Unpack a BID128 encoding, per IEEE 754-2019 3.5.2, and render it.
 func decodeBid128toAscii(out []byte, bid128Hi, bid128Lo uint64) int {
 	verify("the field widths tile the encoding", func() bool { return 1+w5+tWidth == 128 })
+
+	// The API's contract is a buffer of at least MaxLen, so that is what is
+	// checked -- once, on every call, rather than per rendered form. The
+	// public entry points take a *[MaxLen]byte, but that length is gone by
+	// the time the slice reaches here, so it is re-established at this
+	// boundary.
+	demand("the buffer is at least MaxLen bytes", len(out) >= MaxLen)
 
 	sign := (bid128Hi & signBit) != 0
 	combination := int((bid128Hi >> (tWidth - 64)) & 0x1FFFF)
@@ -993,6 +991,13 @@ func decodeBid128toAscii(out []byte, bid128Hi, bid128Lo uint64) int {
 // Unpack a DPD128 encoding and hand the pieces to the same renderers.
 func decodeDpd128toAscii(out []byte, dpd128Hi, dpd128Lo uint64) int {
 	const w = 12 // exponent continuation width
+
+	// The API's contract is a buffer of at least MaxLen, so that is what is
+	// checked -- once, on every call, rather than per rendered form. The
+	// public entry points take a *[MaxLen]byte, but that length is gone by
+	// the time the slice reaches here, so it is re-established at this
+	// boundary.
+	demand("the buffer is at least MaxLen bytes", len(out) >= MaxLen)
 
 	sign := (dpd128Hi & signBit) != 0
 	combination := int((dpd128Hi >> (tWidth - 64)) & 0x1FFFF)

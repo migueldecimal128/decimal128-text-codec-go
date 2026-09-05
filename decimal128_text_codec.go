@@ -107,7 +107,7 @@ import (
  * thunk at the call site: with the tag off the call is inlined to nothing and
  * the never-called closure -- and everything it would have computed -- is
  * dead-code-eliminated. A bare bool would evaluate the predicate even when the
- * checks are off. This is the same shape decimal128-go uses.
+ * checks are off.
  * ------------------------------------------------------------------------- */
 
 // impossible aborts unconditionally. Go spells "does not return" as panic.

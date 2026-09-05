@@ -103,11 +103,10 @@ import (
  *                       through would silently encode an out-of-range
  *                       coefficient.
  *
- * Go has no macros and no @autoclosure, so verify's condition is spelled as a
- * thunk at the call site: with the tag off the call is inlined to nothing and
- * the never-called closure -- and everything it would have computed -- is
- * dead-code-eliminated. A bare bool would evaluate the predicate even when the
- * checks are off.
+ * Go has no macros, so verify's condition is spelled as a thunk at the call
+ * site: with the tag off the call is inlined to nothing and the never-called
+ * closure -- and everything it would have computed -- is dead-code-eliminated.
+ * A bare bool would evaluate the predicate even when the checks are off.
  * ------------------------------------------------------------------------- */
 
 // impossible aborts unconditionally. Go spells "does not return" as panic.

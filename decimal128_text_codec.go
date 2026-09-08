@@ -1893,17 +1893,11 @@ func parseNanText(formatIsBid, sign bool, chFirst int, str string, startPos int)
 			pos++
 		}
 		if accumDigitCount == 0 {
-			if hasParen {
-				return 0, 0, errParsingNaN
-			}
 			return 0, 0, errParsingNaN
 		}
 		if hasParen {
 			// the ')' must be present and must end the input
 			if ch != ')' {
-				if ch == -1 {
-					return 0, 0, errParsingNaN
-				}
 				return 0, 0, errParsingNaN
 			}
 			if codeAt(str, pos) != -1 {

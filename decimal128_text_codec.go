@@ -107,7 +107,6 @@ import (
  * closure -- and everything it would have computed -- is dead-code-eliminated.
  * A bare bool would evaluate the predicate even when the checks are off.
  * ------------------------------------------------------------------------- */
-
 // impossible aborts unconditionally. Go spells "does not return" as panic.
 func impossible(what string) {
 	panic("decimal128-text-codec: impossible state: " + what)
@@ -127,39 +126,9 @@ func verify(what string, cond func() bool) {
 	}
 }
 
-/* --------------------------------------------------------------------------
- * Format constants -- IEEE 754-2019 Table 3.6, decimal128
- * ------------------------------------------------------------------------ */
-
-const (
-	bias   = 6176
-	qMin   = -6176 // the minimum quantum exponent
-	qMax   = 6111  // the maximum quantum exponent
-	tWidth = 110   // trailing significand field width in bits
-	w5     = 17    // combination field width in bits
-)
-
-const (
-	// 10^34, one past the largest coefficient; maxx = max eXclusive
-	maxxCoeff34Hi = 0x0001ED09BEAD87C0
-	maxxCoeff34Lo = 0x378D8E6400000000
-
-	// 10^33, the smallest 34-digit coefficient
-	minPrecision34CoeffHi = 0x0000314DC6448D93
-	minPrecision34CoeffLo = 0x38C15B0A00000000
-
-	// 33 nines -- the largest canonical NaN payload
-	maxPayloadHi = minPrecision34CoeffHi
-	maxPayloadLo = minPrecision34CoeffLo - 1
-
-	signBit       = 0x8000000000000000
-	infPatternHi  = 0x7800000000000000
-	qnanPatternHi = 0x7C00000000000000
-	snanPatternHi = 0x7E00000000000000
-
-	tenPow15 = 1000000000000000
-	tenPow18 = 1000000000000000000
-)
+/* ------------------------------------------------------------------------
+ * Public constants
+ * ---------------------------------------------------------------------- */
 
 /*
 MaxLen is the exact bound on a rendered decimal128, in ASCII character bytes.
@@ -186,22 +155,232 @@ A caller sizes their buffer with it, and *[MaxLen]byte puts it in the type, so
 an undersized buffer is a compile error. No NUL is written, so no room is
 reserved for one.
 */
+// The canonical positive quiet NaN, which the parsers write on failure.
+const qnanPatternHi = 0x7C00000000000000
+
 const MaxLen = 42
 
-/* --------------------------------------------------------------------------
- * Low-level unsigned arithmetic
- * ------------------------------------------------------------------------ */
+/* ------------------------------------------------------------------------
+ * Public API
+ * ---------------------------------------------------------------------- */
 
-// High 64 bits of the 128-bit product x * y.
-func mulhi64(x, y uint64) uint64 {
-	hi, _ := bits.Mul64(x, y)
-	return hi
+/*
+Bid128ToAscii renders a BID128 encoding into a caller-supplied buffer,
+allocating nothing.
+
+Writes the text into out and returns the number of bytes written; the text is
+out[:n]. Nothing is allocated, and MaxLen is part of the buffer's type, so an
+undersized buffer is a compile error rather than a runtime check.
+
+The output is the GDAS to-scientific-string form: integer notation when the
+quantum exponent is zero (e.g. "123"), plain notation when the adjusted
+exponent is in the range -6 to 0 (e.g. "123.45"), normalized scientific
+notation otherwise (e.g. "1.234E+5"). The exponent sign is always written, as
+in "6.02E+23". Cohort information is preserved: "1.00" and "1.0" are distinct
+outputs from distinct encodings of the same numerical value.
+
+Special values render as "Infinity", "-Infinity", "NaN" and "sNaN", each with
+an optional sign and an optional payload suffix such as "NaN123".
+
+The two interchange encodings differ only in how the coefficient is stored:
+BID128 as a binary integer, DPD128 as a leading digit plus eleven 10-bit
+declets. The sign and the 14-bit biased exponent are the same in both, and peer
+encodings of the same value render to identical text.
+
+This cannot fail. Every 128-bit pattern renders: a non-canonical BID128
+coefficient (>= 10^34) renders as zero at the encoded exponent, and a NaN
+payload >= 10^33 renders as no payload, both per IEEE 754-2019 section 3.5.2.
+
+	var buf [decimal128textcodec.MaxLen]byte
+	n := decimal128textcodec.Bid128ToAscii(&buf, hi, lo)
+	fmt.Printf("%s\n", buf[:n])
+*/
+func Bid128ToAscii(out *[MaxLen]byte, hi, lo uint64) int {
+	// The length is returned rather than out[:n]: a slice header carries a
+	// capacity this API has no use for, so out[:n] would hand back
+	// cap == MaxLen and appending to the result would silently write into
+	// the rest of the caller's buffer.
+	return decodeBid128toAscii(out[:], hi, lo)
 }
 
-// Leading zero count, 64 for zero.
-func clz64(v uint64) int {
-	return bits.LeadingZeros64(v)
+/*
+Dpd128ToAscii renders a DPD128 encoding into a caller-supplied buffer,
+allocating nothing.
+
+Writes the text into out and returns the number of bytes written; the text is
+out[:n]. Nothing is allocated, and MaxLen is part of the buffer's type, so an
+undersized buffer is a compile error rather than a runtime check.
+
+The output is the GDAS to-scientific-string form: integer notation when the
+quantum exponent is zero (e.g. "123"), plain notation when the adjusted
+exponent is in the range -6 to 0 (e.g. "123.45"), normalized scientific
+notation otherwise (e.g. "1.234E+5"). The exponent sign is always written, as
+in "6.02E+23". Cohort information is preserved: "1.00" and "1.0" are distinct
+outputs from distinct encodings of the same numerical value.
+
+Special values render as "Infinity", "-Infinity", "NaN" and "sNaN", each with
+an optional sign and an optional payload suffix such as "NaN123".
+
+The two interchange encodings differ only in how the coefficient is stored:
+BID128 as a binary integer, DPD128 as a leading digit plus eleven 10-bit
+declets. The sign and the 14-bit biased exponent are the same in both, and peer
+encodings of the same value render to identical text.
+
+This cannot fail. Every 128-bit pattern renders: a DPD128 coefficient is always
+in range, since a leading digit of at most 9 followed by eleven declets cannot
+reach 10^34; a NaN payload, carried in those same declets, is likewise always
+in range; and non-canonical declets decode to their value, per IEEE 754-2019
+section 3.5.2.
+
+	var buf [decimal128textcodec.MaxLen]byte
+	n := decimal128textcodec.Dpd128ToAscii(&buf, hi, lo)
+	fmt.Printf("%s\n", buf[:n])
+*/
+func Dpd128ToAscii(out *[MaxLen]byte, hi, lo uint64) int {
+	// The length is returned rather than out[:n]: a slice header carries a
+	// capacity this API has no use for, so out[:n] would hand back
+	// cap == MaxLen and appending to the result would silently write into
+	// the rest of the caller's buffer.
+	return decodeDpd128toAscii(out[:], hi, lo)
 }
+
+/*
+Bid128Parse parses a decimal character sequence into a BID128 encoding.
+
+Returns the encoding as hi and lo plus an error. On failure the error is
+non-nil and the encoding is the canonical positive quiet NaN, so a caller who
+discards the error still holds a legal IEEE 754-2019 datum rather than a zero
+value that means something else. The error's text is a human-readable message;
+its text is the engine's ParseStatus name for the failure -- EMPTY_STRING,
+INVALID_FORMAT, UNEXPECTED_CHAR, DOUBLE_DOT, NO_COEFFICIENT_DIGIT,
+NO_EXPONENT_DIGIT, INVALID_UNDERSCORE_LOCATION, FAILURE_PARSING_INFINITY or
+FAILURE_PARSING_NAN -- and the conformance suite asserts it against the shared
+corpus, so it is part of the contract.
+
+Accepted input:
+
+  - Plain notation: "0", "-1.5", "123.456", "0.0001".
+  - Scientific notation: "1.5E10", "-2.3e-7", "6.02E+23". Both E and e are
+    accepted as the exponent separator.
+  - Digit separators: _ between two digits, in the coefficient or the exponent
+    ("1_000", "1.234_567", "1e1_0"). An underscore must be both preceded and
+    followed by a digit, so "1_", "_1", "1__2", "1_.5" and "1._5" are all
+    rejected.
+  - The case-insensitive words Infinity, Inf, NaN, qNaN and sNaN, each with an
+    optional sign and an optional NaN payload of decimal digits ("NaN123",
+    "-sNaN42"). A payload may also be parenthesised, as "NaN(123)".
+
+The parenthesised payload form is positional and balanced: ( immediately after
+the word, at least one digit, ) last. "NaN()", "NaN(1", "NaN(1)2(3)", "NaN[1]"
+and "NaN{1}" are rejected. Rendering never emits parentheses, and the full
+decimal128 ports accept the same spelling.
+
+More than 34 significant digits round to 34, ties-to-even. Magnitudes above the
+representable range become Infinity; magnitudes below it become a subnormal or
+zero. None of those are failures.
+
+Failures are structural: an empty sequence, unrecognized characters, missing
+digits around the radix point, a malformed exponent field.
+
+The two interchange encodings differ only in how the coefficient is stored:
+BID128 as a binary integer, DPD128 as a leading digit plus eleven 10-bit
+declets. The same text parses to peer encodings of the same value in either
+format, and the canonical positive quiet NaN is the same bit pattern in both.
+*/
+func Bid128Parse(text string) (hi, lo uint64, err error) {
+	return parseInto(true, text)
+}
+
+/*
+Dpd128Parse parses a decimal character sequence into a DPD128 encoding.
+
+Returns the encoding as hi and lo plus an error. On failure the error is
+non-nil and the encoding is the canonical positive quiet NaN, so a caller who
+discards the error still holds a legal IEEE 754-2019 datum rather than a zero
+value that means something else. The error's text is a human-readable message;
+its text is the engine's ParseStatus name for the failure -- EMPTY_STRING,
+INVALID_FORMAT, UNEXPECTED_CHAR, DOUBLE_DOT, NO_COEFFICIENT_DIGIT,
+NO_EXPONENT_DIGIT, INVALID_UNDERSCORE_LOCATION, FAILURE_PARSING_INFINITY or
+FAILURE_PARSING_NAN -- and the conformance suite asserts it against the shared
+corpus, so it is part of the contract.
+
+Accepted input:
+
+  - Plain notation: "0", "-1.5", "123.456", "0.0001".
+  - Scientific notation: "1.5E10", "-2.3e-7", "6.02E+23". Both E and e are
+    accepted as the exponent separator.
+  - Digit separators: _ between two digits, in the coefficient or the exponent
+    ("1_000", "1.234_567", "1e1_0"). An underscore must be both preceded and
+    followed by a digit, so "1_", "_1", "1__2", "1_.5" and "1._5" are all
+    rejected.
+  - The case-insensitive words Infinity, Inf, NaN, qNaN and sNaN, each with an
+    optional sign and an optional NaN payload of decimal digits ("NaN123",
+    "-sNaN42"). A payload may also be parenthesised, as "NaN(123)".
+
+The parenthesised payload form is positional and balanced: ( immediately after
+the word, at least one digit, ) last. "NaN()", "NaN(1", "NaN(1)2(3)", "NaN[1]"
+and "NaN{1}" are rejected. Rendering never emits parentheses, and the full
+decimal128 ports accept the same spelling.
+
+More than 34 significant digits round to 34, ties-to-even. Magnitudes above the
+representable range become Infinity; magnitudes below it become a subnormal or
+zero. None of those are failures.
+
+Failures are structural: an empty sequence, unrecognized characters, missing
+digits around the radix point, a malformed exponent field.
+
+The two interchange encodings differ only in how the coefficient is stored:
+BID128 as a binary integer, DPD128 as a leading digit plus eleven 10-bit
+declets. The same text parses to peer encodings of the same value in either
+format, and the canonical positive quiet NaN is the same bit pattern in both.
+*/
+func Dpd128Parse(text string) (hi, lo uint64, err error) {
+	return parseInto(false, text)
+}
+
+func parseInto(formatIsBid bool, text string) (hi, lo uint64, err error) {
+	hi, lo, err = encodeStringOrError(formatIsBid, text)
+	if err != nil {
+		// Always return an encoding, so a caller who discards the error still
+		// observes a legal datum. The canonical positive quiet NaN is the same
+		// bit pattern in both formats.
+		return qnanPatternHi, 0, err
+	}
+	return hi, lo, nil
+}
+
+/* ------------------------------------------------------------------------
+ * Format constants -- IEEE 754-2019 Table 3.6, decimal128
+ * ---------------------------------------------------------------------- */
+
+const (
+	bias   = 6176
+	qMin   = -6176 // the minimum quantum exponent
+	qMax   = 6111  // the maximum quantum exponent
+	tWidth = 110   // trailing significand field width in bits
+	w5     = 17    // combination field width in bits
+)
+
+const (
+	// 10^34, one past the largest coefficient; maxx = max eXclusive
+	maxxCoeff34Hi = 0x0001ED09BEAD87C0
+	maxxCoeff34Lo = 0x378D8E6400000000
+
+	// 10^33, the smallest 34-digit coefficient
+	minPrecision34CoeffHi = 0x0000314DC6448D93
+	minPrecision34CoeffLo = 0x38C15B0A00000000
+
+	// 33 nines -- the largest canonical NaN payload
+	maxPayloadHi = minPrecision34CoeffHi
+	maxPayloadLo = minPrecision34CoeffLo - 1
+
+	signBit       = 0x8000000000000000
+	infPatternHi  = 0x7800000000000000
+	snanPatternHi = 0x7E00000000000000
+
+	tenPow15 = 1000000000000000
+	tenPow18 = 1000000000000000000
+)
 
 /*
  * Powers of 10 from 10^0 through 10^34 as 128-bit values in little-endian
@@ -255,6 +434,97 @@ var pow10Table = [(34 + 1) * 2]uint64{
 	0x378D8E6400000000, 0x0001ED09BEAD87C0, // 10^34
 }
 
+const (
+	exact   = 0
+	ltHalf  = 1
+	tieHalf = 2 // `half` alone would read as a quantity in Go
+	gtHalf  = 3
+)
+
+// Two bits per digit 0..9: 0 -> exact, 1..4 -> ltHalf, 5 -> tieHalf, 6..9 -> gtHalf
+const digitMap = 0xFF954
+
+/*
+ * Reciprocal-multiplication constants. The 64-bit ones fold in the 64-bit
+ * shift that mulhi64 already performs, so the named shift is the remainder.
+ */
+const (
+	mU64Div1e8 = 0x8000000000000000 | 0x2BCC77118461CEFD
+	sU64Div1e8 = 26
+	mU32Div1e1 = 0xCCCCCCCD
+	sU32Div1e1 = 35
+	mU32Div1e2 = 0x51EB851F
+	sU32Div1e2 = 37
+	mU64Div1e4 = 0x346DC5D63886594B
+	sU64Div1e4 = 11
+	mask32     = 0xFFFFFFFF
+)
+
+/*
+ * None of the optional leading characters live in the string data. The sign,
+ * and the 's' that marks a signaling NaN, are each written unconditionally and
+ * then overwritten by whatever follows when they are not wanted -- the trick
+ * fnzToIntegerAscii already uses for the sign. That holds only because every
+ * optional character is a single byte at the front of the form: a spelling that
+ * ever put one elsewhere would render wrong rather than fail to compile. The
+ * one exception is written where it happens, in zerAscii's exponent form,
+ * where the byte is a TRAILING '+' overwritten by AppendInt's own '-'.
+ */
+const infinityText = "Infinity"
+
+const nanText = "NaN"
+
+/*
+ * Every plain-form zero is a prefix of this literal. k = -qExp is the count of
+ * zeros after the radix point, so k = 0 renders "0" with no radix point at all
+ * and k >= 1 renders "0." followed by k zeros -- lengths 1 and k + 2.
+ *
+ * The sign is not in the data. It is written into out[0] unconditionally and
+ * overwritten by the '0' when the value is positive, the same trick the finite
+ * renderers use. That works because the negative spelling of every form here is
+ * the positive spelling with one byte in front; a form that ever put the sign
+ * anywhere else would render wrong rather than fail to compile.
+ */
+const plainZero = "0.000000"
+
+// The exponent form's base. The '+' is not here: see zerAscii below.
+const zeroExpText = "0E"
+
+/*
+ * The parse failures, one value each. They are package-private on purpose: the
+ * header's promise is that a caller can tell success from failure and read a
+ * message, not that any particular wording is stable, and an exported sentinel
+ * would turn every one of these strings into API. Sharing one value per failure
+ * is also what lets the corpus assert that the two formats reject an input for
+ * the same reason.
+ */
+var (
+	errEmptyString        = errors.New("EMPTY_STRING")
+	errInvalidFormat      = errors.New("INVALID_FORMAT")
+	errUnexpectedChar     = errors.New("UNEXPECTED_CHAR")
+	errDoubleRadixDot     = errors.New("DOUBLE_DOT")
+	errNoCoefficientDigit = errors.New("NO_COEFFICIENT_DIGIT")
+	errNoExponentDigit    = errors.New("NO_EXPONENT_DIGIT")
+	errUnderscoreLocation = errors.New("INVALID_UNDERSCORE_LOCATION")
+	errParsingInfinity    = errors.New("FAILURE_PARSING_INFINITY")
+	errParsingNaN         = errors.New("FAILURE_PARSING_NAN")
+)
+
+/* ------------------------------------------------------------------------
+ * Low-level unsigned arithmetic
+ * ---------------------------------------------------------------------- */
+
+// High 64 bits of the 128-bit product x * y.
+func mulhi64(x, y uint64) uint64 {
+	hi, _ := bits.Mul64(x, y)
+	return hi
+}
+
+// Leading zero count, 64 for zero.
+func clz64(v uint64) int {
+	return bits.LeadingZeros64(v)
+}
+
 // Bit length of a 128-bit value: highest set bit plus one, 0 for zero.
 func calcBitLen128(dw1, dw0 uint64) int {
 	if dw1 != 0 {
@@ -300,9 +570,9 @@ func u128FmaPow10(x uint64, pow10 int, a uint64) (outHi, outLo uint64) {
 	return prodHi + carry, sumLo
 }
 
-/* --------------------------------------------------------------------------
+/* ------------------------------------------------------------------------
  * The divide kernel
- * ------------------------------------------------------------------------ */
+ * ---------------------------------------------------------------------- */
 
 /*
  * Divide a 113-bit value by 10^pow10 for pow10 in 1..9, returning the quotient
@@ -337,19 +607,9 @@ func u113DivModPow10Max9(dwHi, dwLo uint64, pow10 int) (qHi, qLo, rem uint64) {
 	return q1 >> (14 + pow10), (q1 << k) + q0, (r0 << pow10) | b
 }
 
-/* --------------------------------------------------------------------------
+/* ------------------------------------------------------------------------
  * Residue -- how much was discarded, relative to half a ulp
- * ------------------------------------------------------------------------ */
-
-const (
-	exact   = 0
-	ltHalf  = 1
-	tieHalf = 2 // `half` alone would read as a quantity in Go
-	gtHalf  = 3
-)
-
-// Two bits per digit 0..9: 0 -> exact, 1..4 -> ltHalf, 5 -> tieHalf, 6..9 -> gtHalf
-const digitMap = 0xFF954
+ * ---------------------------------------------------------------------- */
 
 func residueFromDecimalDigit(digit int) int {
 	return int((digitMap >> (digit << 1)) & 0x03)
@@ -571,25 +831,9 @@ func decletsFromBin(bin uint64) uint64 {
 	return declets
 }
 
-/* --------------------------------------------------------------------------
+/* ------------------------------------------------------------------------
  * Rendering integers into ASCII
- * ------------------------------------------------------------------------ */
-
-/*
- * Reciprocal-multiplication constants. The 64-bit ones fold in the 64-bit
- * shift that mulhi64 already performs, so the named shift is the remainder.
- */
-const (
-	mU64Div1e8 = 0x8000000000000000 | 0x2BCC77118461CEFD
-	sU64Div1e8 = 26
-	mU32Div1e1 = 0xCCCCCCCD
-	sU32Div1e1 = 35
-	mU32Div1e2 = 0x51EB851F
-	sU32Div1e2 = 37
-	mU64Div1e4 = 0x346DC5D63886594B
-	sU64Div1e4 = 11
-	mask32     = 0xFFFFFFFF
-)
+ * ---------------------------------------------------------------------- */
 
 /*
  * Render exactly 8 decimal digits of dw, ending at offMaxx. Zero-pads. The
@@ -715,18 +959,6 @@ func u128ToAscii(digitPrintCount int, dw1, dw0 uint64, ascii []byte, off int) in
  * to (sign, qExp, coefficient) and hand it here.
  * ------------------------------------------------------------------------ */
 
-/*
- * None of the optional leading characters live in the string data. The sign,
- * and the 's' that marks a signaling NaN, are each written unconditionally and
- * then overwritten by whatever follows when they are not wanted -- the trick
- * fnzToIntegerAscii already uses for the sign. That holds only because every
- * optional character is a single byte at the front of the form: a spelling that
- * ever put one elsewhere would render wrong rather than fail to compile. The
- * one exception is written where it happens, in zerAscii's exponent form,
- * where the byte is a TRAILING '+' overwritten by AppendInt's own '-'.
- */
-const infinityText = "Infinity"
-
 func infAscii(out []byte, sign bool) int {
 	signLen := 0
 	if sign {
@@ -737,8 +969,6 @@ func infAscii(out []byte, sign bool) int {
 	copy(out[signLen:], infinityText)
 	return totalLen
 }
-
-const nanText = "NaN"
 
 func nanAscii(out []byte, sign, isSignaling bool, payloadHi, payloadLo uint64) int {
 	signLen := 0
@@ -767,22 +997,6 @@ func nanAscii(out []byte, sign, isSignaling bool, payloadHi, payloadLo uint64) i
 	u128ToAscii(digitLen, payloadHi, payloadLo, out, baseLen)
 	return totalLen
 }
-
-/*
- * Every plain-form zero is a prefix of this literal. k = -qExp is the count of
- * zeros after the radix point, so k = 0 renders "0" with no radix point at all
- * and k >= 1 renders "0." followed by k zeros -- lengths 1 and k + 2.
- *
- * The sign is not in the data. It is written into out[0] unconditionally and
- * overwritten by the '0' when the value is positive, the same trick the finite
- * renderers use. That works because the negative spelling of every form here is
- * the positive spelling with one byte in front; a form that ever put the sign
- * anywhere else would render wrong rather than fail to compile.
- */
-const plainZero = "0.000000"
-
-// The exponent form's base. The '+' is not here: see zerAscii below.
-const zeroExpText = "0E"
 
 func zerAscii(out []byte, sign bool, qExp int) int {
 	if qExp <= 0 && qExp >= -6 {
@@ -930,9 +1144,9 @@ func fnzAscii(out []byte, sign bool, qExp int, dw1, dw0 uint64) int {
 	return fnzToNormalizedScientificAscii(out, sign, qExp, digitLen, dw1, dw0)
 }
 
-/* --------------------------------------------------------------------------
+/* ------------------------------------------------------------------------
  * bits -> text
- * ------------------------------------------------------------------------ */
+ * ---------------------------------------------------------------------- */
 
 // Unpack a BID128 encoding, per IEEE 754-2019 3.5.2, and render it.
 func decodeBid128toAscii(out []byte, bid128Hi, bid128Lo uint64) int {
@@ -1179,6 +1393,10 @@ func setNaN(formatIsBid, sign, isSignaling bool, payloadDw1, payloadDw0 uint64) 
 	return dpd128SetNaN(sign, isSignaling, payloadDw1, payloadDw0)
 }
 
+/* ------------------------------------------------------------------------
+ * Finalize: rounding, clamping, underflow
+ * ---------------------------------------------------------------------- */
+
 func finalizeOverflow(sign bool) (hi, lo uint64) {
 	s := uint64(0)
 	if sign {
@@ -1186,10 +1404,6 @@ func finalizeOverflow(sign bool) (hi, lo uint64) {
 	}
 	return s | infPatternHi, 0
 }
-
-/* --------------------------------------------------------------------------
- * Finalize: rounding, clamping, underflow
- * ------------------------------------------------------------------------ */
 
 // Does this coefficient/exponent pair fit as a canonical encoding?
 func coeffQExpFit(dw1, dw0 uint64, qExp int) bool {
@@ -1392,29 +1606,9 @@ func roundAndFinalizeFinite(formatIsBid, sign bool, qExpIn int, dw1In, dw0In uin
 	return setFinite(formatIsBid, sign, qExp, dw1, dw0)
 }
 
-/* --------------------------------------------------------------------------
+/* ------------------------------------------------------------------------
  * text -> bits
- * ------------------------------------------------------------------------ */
-
-/*
- * The parse failures, one value each. They are package-private on purpose: the
- * header's promise is that a caller can tell success from failure and read a
- * message, not that any particular wording is stable, and an exported sentinel
- * would turn every one of these strings into API. Sharing one value per failure
- * is also what lets the corpus assert that the two formats reject an input for
- * the same reason.
- */
-var (
-	errEmptyString        = errors.New("EMPTY_STRING")
-	errInvalidFormat      = errors.New("INVALID_FORMAT")
-	errUnexpectedChar     = errors.New("UNEXPECTED_CHAR")
-	errDoubleRadixDot     = errors.New("DOUBLE_DOT")
-	errNoCoefficientDigit = errors.New("NO_COEFFICIENT_DIGIT")
-	errNoExponentDigit    = errors.New("NO_EXPONENT_DIGIT")
-	errUnderscoreLocation = errors.New("INVALID_UNDERSCORE_LOCATION")
-	errParsingInfinity    = errors.New("FAILURE_PARSING_INFINITY")
-	errParsingNaN         = errors.New("FAILURE_PARSING_NAN")
-)
+ * ---------------------------------------------------------------------- */
 
 /*
  * The code of the byte at index, or -1 past the end of the string.
@@ -1758,193 +1952,4 @@ func encodeStringOrError(formatIsBid bool, str string) (hi, lo uint64, err error
 		return 0, 0, errEmptyString
 	}
 	return 0, 0, errInvalidFormat
-}
-
-/* --------------------------------------------------------------------------
- * The published surface
- * ------------------------------------------------------------------------ */
-
-/*
-Bid128ToAscii renders a BID128 encoding into a caller-supplied buffer,
-allocating nothing.
-
-Writes the text into out and returns the number of bytes written; the text is
-out[:n]. Nothing is allocated, and MaxLen is part of the buffer's type, so an
-undersized buffer is a compile error rather than a runtime check.
-
-The output is the GDAS to-scientific-string form: integer notation when the
-quantum exponent is zero (e.g. "123"), plain notation when the adjusted
-exponent is in the range -6 to 0 (e.g. "123.45"), normalized scientific
-notation otherwise (e.g. "1.234E+5"). The exponent sign is always written, as
-in "6.02E+23". Cohort information is preserved: "1.00" and "1.0" are distinct
-outputs from distinct encodings of the same numerical value.
-
-Special values render as "Infinity", "-Infinity", "NaN" and "sNaN", each with
-an optional sign and an optional payload suffix such as "NaN123".
-
-The two interchange encodings differ only in how the coefficient is stored:
-BID128 as a binary integer, DPD128 as a leading digit plus eleven 10-bit
-declets. The sign and the 14-bit biased exponent are the same in both, and peer
-encodings of the same value render to identical text.
-
-This cannot fail. Every 128-bit pattern renders: a non-canonical BID128
-coefficient (>= 10^34) renders as zero at the encoded exponent, and a NaN
-payload >= 10^33 renders as no payload, both per IEEE 754-2019 section 3.5.2.
-
-	var buf [decimal128textcodec.MaxLen]byte
-	n := decimal128textcodec.Bid128ToAscii(&buf, hi, lo)
-	fmt.Printf("%s\n", buf[:n])
-*/
-func Bid128ToAscii(out *[MaxLen]byte, hi, lo uint64) int {
-	// The length is returned rather than out[:n]: a slice header carries a
-	// capacity this API has no use for, so out[:n] would hand back
-	// cap == MaxLen and appending to the result would silently write into
-	// the rest of the caller's buffer.
-	return decodeBid128toAscii(out[:], hi, lo)
-}
-
-/*
-Dpd128ToAscii renders a DPD128 encoding into a caller-supplied buffer,
-allocating nothing.
-
-Writes the text into out and returns the number of bytes written; the text is
-out[:n]. Nothing is allocated, and MaxLen is part of the buffer's type, so an
-undersized buffer is a compile error rather than a runtime check.
-
-The output is the GDAS to-scientific-string form: integer notation when the
-quantum exponent is zero (e.g. "123"), plain notation when the adjusted
-exponent is in the range -6 to 0 (e.g. "123.45"), normalized scientific
-notation otherwise (e.g. "1.234E+5"). The exponent sign is always written, as
-in "6.02E+23". Cohort information is preserved: "1.00" and "1.0" are distinct
-outputs from distinct encodings of the same numerical value.
-
-Special values render as "Infinity", "-Infinity", "NaN" and "sNaN", each with
-an optional sign and an optional payload suffix such as "NaN123".
-
-The two interchange encodings differ only in how the coefficient is stored:
-BID128 as a binary integer, DPD128 as a leading digit plus eleven 10-bit
-declets. The sign and the 14-bit biased exponent are the same in both, and peer
-encodings of the same value render to identical text.
-
-This cannot fail. Every 128-bit pattern renders: a DPD128 coefficient is always
-in range, since a leading digit of at most 9 followed by eleven declets cannot
-reach 10^34; a NaN payload, carried in those same declets, is likewise always
-in range; and non-canonical declets decode to their value, per IEEE 754-2019
-section 3.5.2.
-
-	var buf [decimal128textcodec.MaxLen]byte
-	n := decimal128textcodec.Dpd128ToAscii(&buf, hi, lo)
-	fmt.Printf("%s\n", buf[:n])
-*/
-func Dpd128ToAscii(out *[MaxLen]byte, hi, lo uint64) int {
-	// The length is returned rather than out[:n]: a slice header carries a
-	// capacity this API has no use for, so out[:n] would hand back
-	// cap == MaxLen and appending to the result would silently write into
-	// the rest of the caller's buffer.
-	return decodeDpd128toAscii(out[:], hi, lo)
-}
-
-/*
-Bid128Parse parses a decimal character sequence into a BID128 encoding.
-
-Returns the encoding as hi and lo plus an error. On failure the error is
-non-nil and the encoding is the canonical positive quiet NaN, so a caller who
-discards the error still holds a legal IEEE 754-2019 datum rather than a zero
-value that means something else. The error's text is a human-readable message;
-its text is the engine's ParseStatus name for the failure -- EMPTY_STRING,
-INVALID_FORMAT, UNEXPECTED_CHAR, DOUBLE_DOT, NO_COEFFICIENT_DIGIT,
-NO_EXPONENT_DIGIT, INVALID_UNDERSCORE_LOCATION, FAILURE_PARSING_INFINITY or
-FAILURE_PARSING_NAN -- and the conformance suite asserts it against the shared
-corpus, so it is part of the contract.
-
-Accepted input:
-
-  - Plain notation: "0", "-1.5", "123.456", "0.0001".
-  - Scientific notation: "1.5E10", "-2.3e-7", "6.02E+23". Both E and e are
-    accepted as the exponent separator.
-  - Digit separators: _ between two digits, in the coefficient or the exponent
-    ("1_000", "1.234_567", "1e1_0"). An underscore must be both preceded and
-    followed by a digit, so "1_", "_1", "1__2", "1_.5" and "1._5" are all
-    rejected.
-  - The case-insensitive words Infinity, Inf, NaN, qNaN and sNaN, each with an
-    optional sign and an optional NaN payload of decimal digits ("NaN123",
-    "-sNaN42"). A payload may also be parenthesised, as "NaN(123)".
-
-The parenthesised payload form is positional and balanced: ( immediately after
-the word, at least one digit, ) last. "NaN()", "NaN(1", "NaN(1)2(3)", "NaN[1]"
-and "NaN{1}" are rejected. Rendering never emits parentheses, and the full
-decimal128 ports accept the same spelling.
-
-More than 34 significant digits round to 34, ties-to-even. Magnitudes above the
-representable range become Infinity; magnitudes below it become a subnormal or
-zero. None of those are failures.
-
-Failures are structural: an empty sequence, unrecognized characters, missing
-digits around the radix point, a malformed exponent field.
-
-The two interchange encodings differ only in how the coefficient is stored:
-BID128 as a binary integer, DPD128 as a leading digit plus eleven 10-bit
-declets. The same text parses to peer encodings of the same value in either
-format, and the canonical positive quiet NaN is the same bit pattern in both.
-*/
-func Bid128Parse(text string) (hi, lo uint64, err error) {
-	return parseInto(true, text)
-}
-
-/*
-Dpd128Parse parses a decimal character sequence into a DPD128 encoding.
-
-Returns the encoding as hi and lo plus an error. On failure the error is
-non-nil and the encoding is the canonical positive quiet NaN, so a caller who
-discards the error still holds a legal IEEE 754-2019 datum rather than a zero
-value that means something else. The error's text is a human-readable message;
-its text is the engine's ParseStatus name for the failure -- EMPTY_STRING,
-INVALID_FORMAT, UNEXPECTED_CHAR, DOUBLE_DOT, NO_COEFFICIENT_DIGIT,
-NO_EXPONENT_DIGIT, INVALID_UNDERSCORE_LOCATION, FAILURE_PARSING_INFINITY or
-FAILURE_PARSING_NAN -- and the conformance suite asserts it against the shared
-corpus, so it is part of the contract.
-
-Accepted input:
-
-  - Plain notation: "0", "-1.5", "123.456", "0.0001".
-  - Scientific notation: "1.5E10", "-2.3e-7", "6.02E+23". Both E and e are
-    accepted as the exponent separator.
-  - Digit separators: _ between two digits, in the coefficient or the exponent
-    ("1_000", "1.234_567", "1e1_0"). An underscore must be both preceded and
-    followed by a digit, so "1_", "_1", "1__2", "1_.5" and "1._5" are all
-    rejected.
-  - The case-insensitive words Infinity, Inf, NaN, qNaN and sNaN, each with an
-    optional sign and an optional NaN payload of decimal digits ("NaN123",
-    "-sNaN42"). A payload may also be parenthesised, as "NaN(123)".
-
-The parenthesised payload form is positional and balanced: ( immediately after
-the word, at least one digit, ) last. "NaN()", "NaN(1", "NaN(1)2(3)", "NaN[1]"
-and "NaN{1}" are rejected. Rendering never emits parentheses, and the full
-decimal128 ports accept the same spelling.
-
-More than 34 significant digits round to 34, ties-to-even. Magnitudes above the
-representable range become Infinity; magnitudes below it become a subnormal or
-zero. None of those are failures.
-
-Failures are structural: an empty sequence, unrecognized characters, missing
-digits around the radix point, a malformed exponent field.
-
-The two interchange encodings differ only in how the coefficient is stored:
-BID128 as a binary integer, DPD128 as a leading digit plus eleven 10-bit
-declets. The same text parses to peer encodings of the same value in either
-format, and the canonical positive quiet NaN is the same bit pattern in both.
-*/
-func Dpd128Parse(text string) (hi, lo uint64, err error) {
-	return parseInto(false, text)
-}
-
-func parseInto(formatIsBid bool, text string) (hi, lo uint64, err error) {
-	hi, lo, err = encodeStringOrError(formatIsBid, text)
-	if err != nil {
-		// Always return an encoding, so a caller who discards the error still
-		// observes a legal datum. The canonical positive quiet NaN is the same
-		// bit pattern in both formats.
-		return qnanPatternHi, 0, err
-	}
-	return hi, lo, nil
 }

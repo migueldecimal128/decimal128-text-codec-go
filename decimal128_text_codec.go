@@ -1129,7 +1129,7 @@ func fnzToNormalizedScientificAscii(out []byte, sign bool, qExp, digitLen int, d
 
 /*
  * Finite non-zero: pick the form. Integer when the quantum exponent is zero,
- * fixed-point when the adjusted exponent is at least -6,
+ * fixed-point when it is negative and the adjusted exponent is at least -6,
  * scientific otherwise -- the GDAS auto-select rule.
  */
 func fnzAscii(out []byte, sign bool, qExp int, dw1, dw0 uint64) int {

@@ -1435,6 +1435,12 @@ func codeAt(str string, index int) int {
 	return -1
 }
 
+// The digit test, spelled out once. unicode.IsDigit takes a rune and is
+// Unicode-aware, neither of which suits the int the reader yields.
+func isDigit(ch int) bool {
+	return ch >= '0' && ch <= '9'
+}
+
 /*
  * Parse a finite numeral: optional radix point, optional E exponent, any
  * number of digits.
@@ -1468,9 +1474,9 @@ func parseFiniteValueText(formatIsBid, sign bool, chFirst int, str string, start
 	accum19b := uint64(0)
 	exp := 0
 
-	for (ch >= '0' && ch <= '9') || ch == '.' || ch == '_' {
+	for isDigit(ch) || ch == '.' || ch == '_' {
 		switch {
-		case ch >= '0' && ch <= '9':
+		case isDigit(ch):
 			d := ch - '0'
 			hasCoefficientDigit = true
 			// count while flushing leading zeros
@@ -1530,7 +1536,7 @@ func parseFiniteValueText(formatIsBid, sign bool, chFirst int, str string, start
 		expSignificantDigitCount := 0
 		prevWasDigit = false
 		afterUnderscore = false
-		for (ch >= '0' && ch <= '9') || ch == '_' {
+		for isDigit(ch) || ch == '_' {
 			if ch == '_' {
 				if !prevWasDigit {
 					return 0, 0, errUnderscoreLocation
@@ -1674,7 +1680,7 @@ func parseNanText(formatIsBid, sign bool, chFirst int, str string, startPos int)
 		accumDigitCount := 0
 		accum19a := uint64(0)
 		accum19b := uint64(0)
-		for ch >= '0' && ch <= '9' {
+		for isDigit(ch) {
 			d := ch - '0'
 			// Count every digit written, leading zeros included. The 33-digit
 			// limit is a limit on the payload as spelled, not on its
@@ -1738,7 +1744,7 @@ func encodeStringOrError(formatIsBid bool, str string) (hi, lo uint64, err error
 		ch = codeAt(str, pos)
 		pos++
 	}
-	if (ch >= '0' && ch <= '9') || ch == '.' {
+	if isDigit(ch) || ch == '.' {
 		return parseFiniteValueText(formatIsBid, sign, ch, str, pos)
 	}
 	chLower := ch | 0x20

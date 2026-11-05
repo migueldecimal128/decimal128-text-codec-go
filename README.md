@@ -9,7 +9,7 @@ caller who holds interchange bits or a string, and wants the other one, can
 depend on this without pulling in a full IEEE 754-2019 engine.
 
 For the complete decimal128 implementation see `decimal128-go` at
-<https://decimal128.com>.
+<https://github.com/migueldecimal128/decimal128-go> and <https://decimal128.com>.
 
 ## API
 
